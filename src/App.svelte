@@ -33,6 +33,9 @@
   let statusMessage = '';
   let statusTimeout: number;
 
+  // Loading state for initial load
+  let isLoading = true;
+
   // X/Twitter state
   let xStatus: { configured: boolean; connected: boolean; username: string | null } = {
     configured: false,
@@ -68,6 +71,8 @@
       await loadNotionStatus();
     } catch (err) {
       console.error('Failed to load data:', err);
+    } finally {
+      isLoading = false;
     }
   });
 
@@ -392,6 +397,16 @@
 </script>
 
 <div class="min-h-screen" style="background: var(--bg-primary);">
+  <!-- Loading Overlay -->
+  {#if isLoading}
+    <div class="fixed inset-0 z-50 flex items-center justify-center" style="background: var(--bg-primary);">
+      <div class="flex flex-col items-center gap-4">
+        <div class="loading-spinner"></div>
+        <span class="text-sm" style="color: var(--text-muted);">Loading bookmarks...</span>
+      </div>
+    </div>
+  {/if}
+
   <!-- Header -->
   <header class="bg-white border-b" style="border-color: var(--border-light);">
     <div class="flex items-center justify-between max-w-5xl mx-auto px-5 py-3">
@@ -557,7 +572,7 @@
     {/if}
 
     <!-- Bookmark List -->
-    <div class="grid grid-cols-1 lg:grid-cols-2 gap-3 pb-24">
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-3 pb-safe">
       {#each $filteredBookmarks as bookmark (bookmark.id)}
         <div
           class="card cursor-pointer {$selectedIds.has(bookmark.id) ? 'selected' : ''}"

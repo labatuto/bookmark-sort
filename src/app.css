@@ -48,6 +48,9 @@ body {
   color: var(--text-primary);
   font-size: 14px;
   line-height: 1.5;
+  /* Safe area support for notched devices */
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
 }
 
 #app {
@@ -211,6 +214,8 @@ input[type="text"]:focus, select:focus, textarea:focus {
   background: white;
   border-top: 1px solid var(--border-light);
   box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.05);
+  /* Safe area support for iPhone home indicator */
+  padding-bottom: env(safe-area-inset-bottom);
 }
 
 /* Action bar sections */
@@ -304,5 +309,26 @@ input[type="text"]:focus, select:focus, textarea:focus {
 
   .action-section .btn {
     width: 100%;
+  }
+}
+
+/* Extra bottom padding for safe area on main content */
+.pb-safe {
+  padding-bottom: calc(6rem + env(safe-area-inset-bottom));
+}
+
+/* Loading spinner */
+.loading-spinner {
+  width: 40px;
+  height: 40px;
+  border: 3px solid var(--border-light);
+  border-top-color: var(--accent);
+  border-radius: 50%;
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
   }
 }
