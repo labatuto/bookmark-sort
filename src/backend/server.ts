@@ -46,9 +46,9 @@ if (process.env.OPENAI_API_KEY) {
 // ============== BOOKMARKS ==============
 
 // Get all bookmarks
-app.get('/api/bookmarks', (req, res) => {
+app.get('/api/bookmarks', async (req, res) => {
   try {
-    const bookmarks = db.getAllBookmarks();
+    const bookmarks = await db.getAllBookmarks();
     res.json(bookmarks);
   } catch (err) {
     res.status(500).json({ error: String(err) });
@@ -56,9 +56,9 @@ app.get('/api/bookmarks', (req, res) => {
 });
 
 // Get single bookmark
-app.get('/api/bookmarks/:id', (req, res) => {
+app.get('/api/bookmarks/:id', async (req, res) => {
   try {
-    const bookmark = db.getBookmarkById(req.params.id);
+    const bookmark = await db.getBookmarkById(req.params.id);
     if (!bookmark) {
       return res.status(404).json({ error: 'Bookmark not found' });
     }
@@ -69,13 +69,13 @@ app.get('/api/bookmarks/:id', (req, res) => {
 });
 
 // Update bookmark status
-app.patch('/api/bookmarks/:id/status', (req, res) => {
+app.patch('/api/bookmarks/:id/status', async (req, res) => {
   try {
     const { status } = req.body;
     if (!['pending', 'routed', 'archived'].includes(status)) {
       return res.status(400).json({ error: 'Invalid status' });
     }
-    db.updateBookmarkStatus(req.params.id, status);
+    await db.updateBookmarkStatus(req.params.id, status);
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: String(err) });
@@ -131,7 +131,7 @@ app.post('/api/search', async (req, res) => {
       return res.status(400).json({ error: 'No query provided' });
     }
 
-    const allBookmarks = db.getAllBookmarks();
+    const allBookmarks = await db.getAllBookmarks();
     const lowerQuery = query.toLowerCase();
 
     // First: find exact text matches (author, text, tags)
@@ -168,9 +168,9 @@ app.post('/api/search', async (req, res) => {
 // ============== DESTINATIONS ==============
 
 // Get all destinations
-app.get('/api/destinations', (req, res) => {
+app.get('/api/destinations', async (req, res) => {
   try {
-    const destinations = db.getAllDestinations();
+    const destinations = await db.getAllDestinations();
     // Don't send sensitive config data
     const safe = destinations.map(d => ({
       ...d,
@@ -183,14 +183,14 @@ app.get('/api/destinations', (req, res) => {
 });
 
 // Add destination
-app.post('/api/destinations', (req, res) => {
+app.post('/api/destinations', async (req, res) => {
   try {
     const { type, name, config } = req.body;
     if (!type || !name || !config) {
       return res.status(400).json({ error: 'Missing required fields' });
     }
     const id = uuidv4();
-    db.insertDestination({ id, type, name, config });
+    await db.insertDestination({ id, type, name, config });
     res.json({ id, success: true });
   } catch (err) {
     res.status(500).json({ error: String(err) });
@@ -198,9 +198,9 @@ app.post('/api/destinations', (req, res) => {
 });
 
 // Delete destination
-app.delete('/api/destinations/:id', (req, res) => {
+app.delete('/api/destinations/:id', async (req, res) => {
   try {
-    db.deleteDestination(req.params.id);
+    await db.deleteDestination(req.params.id);
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: String(err) });
@@ -226,7 +226,7 @@ app.post('/api/google/list-folder', async (req, res) => {
     const { folder_url, destination_id } = req.body;
 
     // Get the Google account credentials from the destination
-    const destinations = db.getAllDestinations();
+    const destinations = await db.getAllDestinations();
     const googleDest = destinations.find(d => d.id === destination_id && d.type === 'google');
 
     if (!googleDest) {
@@ -258,9 +258,9 @@ app.post('/api/google/list-folder', async (req, res) => {
 });
 
 // Get all Google accounts (for folder browsing)
-app.get('/api/google/accounts', (req, res) => {
+app.get('/api/google/accounts', async (req, res) => {
   try {
-    const destinations = db.getAllDestinations();
+    const destinations = await db.getAllDestinations();
     const googleAccounts = destinations
       .filter(d => d.type === 'google')
       .map(d => ({
@@ -275,12 +275,12 @@ app.get('/api/google/accounts', (req, res) => {
 });
 
 // Add a Google Doc as a destination
-app.post('/api/google/add-doc-destination', (req, res) => {
+app.post('/api/google/add-doc-destination', async (req, res) => {
   try {
     const { google_account_id, doc_id, doc_name } = req.body;
 
     // Get the Google account to copy credentials
-    const destinations = db.getAllDestinations();
+    const destinations = await db.getAllDestinations();
     const googleAccount = destinations.find(d => d.id === google_account_id && d.type === 'google');
 
     if (!googleAccount) {
@@ -288,7 +288,7 @@ app.post('/api/google/add-doc-destination', (req, res) => {
     }
 
     const id = uuidv4();
-    db.insertDestination({
+    await db.insertDestination({
       id,
       type: 'google-doc',
       name: `📄 ${doc_name}`,
@@ -316,7 +316,7 @@ app.post('/api/google/search-docs', async (req, res) => {
       return res.json([]);
     }
 
-    const destinations = db.getAllDestinations();
+    const destinations = await db.getAllDestinations();
     const googleAccount = destinations.find(d => d.id === google_account_id && d.type === 'google');
 
     if (!googleAccount) {
@@ -339,7 +339,7 @@ app.post('/api/google/send-to-doc', async (req, res) => {
   try {
     const { bookmark_ids, doc_id, doc_name, google_account_id } = req.body;
 
-    const destinations = db.getAllDestinations();
+    const destinations = await db.getAllDestinations();
     const googleAccount = destinations.find(d => d.id === google_account_id && d.type === 'google');
 
     if (!googleAccount) {
@@ -349,7 +349,7 @@ app.post('/api/google/send-to-doc', async (req, res) => {
     const results = { success: 0, failed: 0, errors: [] as string[] };
 
     for (const bookmarkId of bookmark_ids) {
-      const bookmark = db.getBookmarkById(bookmarkId);
+      const bookmark = await db.getBookmarkById(bookmarkId);
       if (!bookmark) {
         results.failed++;
         results.errors.push(`Bookmark ${bookmarkId} not found`);
@@ -374,7 +374,7 @@ app.post('/api/google/send-to-doc', async (req, res) => {
         );
 
         // Log to history
-        db.insertRoutingHistory({
+        await db.insertRoutingHistory({
           id: uuidv4(),
           bookmark_id: bookmarkId,
           destination_id: `gdoc:${doc_id}`,
@@ -382,7 +382,7 @@ app.post('/api/google/send-to-doc', async (req, res) => {
           status: 'success',
         });
 
-        db.updateBookmarkStatus(bookmarkId, 'routed');
+        await db.updateBookmarkStatus(bookmarkId, 'routed');
         // Queue for unbookmarking via Chrome extension
         queueForUnbookmark(bookmarkId, bookmark.tweet_id, bookmark.author_handle);
         results.success++;
@@ -403,7 +403,7 @@ app.post('/api/google/create-doc-with-tweets', async (req, res) => {
   try {
     const { bookmark_ids, doc_title, google_account_id } = req.body;
 
-    const destinations = db.getAllDestinations();
+    const destinations = await db.getAllDestinations();
     const googleAccount = destinations.find(d => d.id === google_account_id && d.type === 'google');
 
     if (!googleAccount) {
@@ -420,7 +420,7 @@ app.post('/api/google/create-doc-with-tweets', async (req, res) => {
 
     // Add each tweet to the doc
     for (const bookmarkId of bookmark_ids) {
-      const bookmark = db.getBookmarkById(bookmarkId);
+      const bookmark = await db.getBookmarkById(bookmarkId);
       if (!bookmark) {
         results.failed++;
         results.errors.push(`Bookmark ${bookmarkId} not found`);
@@ -444,7 +444,7 @@ app.post('/api/google/create-doc-with-tweets', async (req, res) => {
           }
         );
 
-        db.insertRoutingHistory({
+        await db.insertRoutingHistory({
           id: uuidv4(),
           bookmark_id: bookmarkId,
           destination_id: `gdoc:${newDoc.id}`,
@@ -452,7 +452,7 @@ app.post('/api/google/create-doc-with-tweets', async (req, res) => {
           status: 'success',
         });
 
-        db.updateBookmarkStatus(bookmarkId, 'routed');
+        await db.updateBookmarkStatus(bookmarkId, 'routed');
         // Queue for unbookmarking via Chrome extension
         queueForUnbookmark(bookmarkId, bookmark.tweet_id, bookmark.author_handle);
         results.success++;
@@ -525,7 +525,7 @@ app.post('/api/notion/send-to-page', async (req, res) => {
     const results = { success: 0, failed: 0, errors: [] as string[] };
 
     for (const bookmarkId of bookmark_ids) {
-      const bookmark = db.getBookmarkById(bookmarkId);
+      const bookmark = await db.getBookmarkById(bookmarkId);
       if (!bookmark) {
         results.failed++;
         results.errors.push(`Bookmark ${bookmarkId} not found`);
@@ -547,7 +547,7 @@ app.post('/api/notion/send-to-page', async (req, res) => {
         );
 
         // Log to history
-        db.insertRoutingHistory({
+        await db.insertRoutingHistory({
           id: uuidv4(),
           bookmark_id: bookmarkId,
           destination_id: `notion:${page_id}`,
@@ -555,7 +555,7 @@ app.post('/api/notion/send-to-page', async (req, res) => {
           status: 'success',
         });
 
-        db.updateBookmarkStatus(bookmarkId, 'routed');
+        await db.updateBookmarkStatus(bookmarkId, 'routed');
         // Queue for unbookmarking via Chrome extension
         queueForUnbookmark(bookmarkId, bookmark.tweet_id, bookmark.author_handle);
         results.success++;
@@ -579,9 +579,9 @@ app.post('/api/notion/send-to-page', async (req, res) => {
 // ============== X/TWITTER ==============
 
 // Check if X API is configured
-app.get('/api/x/status', (req, res) => {
+app.get('/api/x/status', async (req, res) => {
   const configured = isXConfigured();
-  const destinations = db.getAllDestinations();
+  const destinations = await db.getAllDestinations();
   const xAccount = destinations.find(d => d.type === 'x');
 
   res.json({
@@ -592,9 +592,9 @@ app.get('/api/x/status', (req, res) => {
 });
 
 // Get X accounts (there should only be one)
-app.get('/api/x/accounts', (req, res) => {
+app.get('/api/x/accounts', async (req, res) => {
   try {
-    const destinations = db.getAllDestinations();
+    const destinations = await db.getAllDestinations();
     const xAccounts = destinations
       .filter(d => d.type === 'x')
       .map(d => ({
@@ -622,7 +622,7 @@ app.post('/api/x/auth/start', async (req, res) => {
 
     // Save the X account as a destination
     const id = uuidv4();
-    db.insertDestination({
+    await db.insertDestination({
       id,
       type: 'x',
       name: `X @${result.username}`,
@@ -649,12 +649,12 @@ app.post('/api/x/unbookmark', async (req, res) => {
   try {
     const { bookmark_id } = req.body;
 
-    const bookmark = db.getBookmarkById(bookmark_id);
+    const bookmark = await db.getBookmarkById(bookmark_id);
     if (!bookmark) {
       return res.status(404).json({ error: 'Bookmark not found' });
     }
 
-    const destinations = db.getAllDestinations();
+    const destinations = await db.getAllDestinations();
     const xAccount = destinations.find(d => d.type === 'x');
 
     if (!xAccount) {
@@ -669,7 +669,7 @@ app.post('/api/x/unbookmark', async (req, res) => {
 
     // Update tokens if refreshed
     if (result.newTokens) {
-      db.updateDestinationConfig(xAccount.id, {
+      await db.updateDestinationConfig(xAccount.id, {
         ...xAccount.config,
         access_token: result.newTokens.access_token,
         refresh_token: result.newTokens.refresh_token,
@@ -691,7 +691,7 @@ app.post('/api/x/unbookmark/bulk', async (req, res) => {
       return res.status(400).json({ error: 'No bookmark IDs provided' });
     }
 
-    const destinations = db.getAllDestinations();
+    const destinations = await db.getAllDestinations();
     const xAccount = destinations.find(d => d.type === 'x');
 
     if (!xAccount) {
@@ -701,7 +701,7 @@ app.post('/api/x/unbookmark/bulk', async (req, res) => {
     // Get tweet IDs from bookmark IDs
     const tweetIds: string[] = [];
     for (const bookmarkId of bookmark_ids) {
-      const bookmark = db.getBookmarkById(bookmarkId);
+      const bookmark = await db.getBookmarkById(bookmarkId);
       if (bookmark) {
         tweetIds.push(bookmark.tweet_id);
       }
@@ -715,7 +715,7 @@ app.post('/api/x/unbookmark/bulk', async (req, res) => {
 
     // Update tokens if refreshed
     if (result.newTokens) {
-      db.updateDestinationConfig(xAccount.id, {
+      await db.updateDestinationConfig(xAccount.id, {
         ...xAccount.config,
         access_token: result.newTokens.access_token,
         refresh_token: result.newTokens.refresh_token,
@@ -731,9 +731,9 @@ app.post('/api/x/unbookmark/bulk', async (req, res) => {
 // ============== UNBOOKMARK QUEUE (for Chrome Extension) ==============
 
 // Get the unbookmark queue
-app.get('/api/unbookmark-queue', (req, res) => {
+app.get('/api/unbookmark-queue', async (req, res) => {
   try {
-    const queue = db.getUnbookmarkQueue();
+    const queue = await db.getUnbookmarkQueue();
     res.json({ queue });
   } catch (err) {
     res.status(500).json({ error: String(err) });
@@ -741,13 +741,13 @@ app.get('/api/unbookmark-queue', (req, res) => {
 });
 
 // Remove a tweet from the queue (called by extension after successful unbookmark)
-app.post('/api/unbookmark-queue/remove', (req, res) => {
+app.post('/api/unbookmark-queue/remove', async (req, res) => {
   try {
     const { tweet_id } = req.body;
     if (!tweet_id) {
       return res.status(400).json({ error: 'tweet_id required' });
     }
-    db.removeFromUnbookmarkQueue(tweet_id);
+    await db.removeFromUnbookmarkQueue(tweet_id);
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: String(err) });
@@ -755,9 +755,9 @@ app.post('/api/unbookmark-queue/remove', (req, res) => {
 });
 
 // Clear the entire queue
-app.post('/api/unbookmark-queue/clear', (req, res) => {
+app.post('/api/unbookmark-queue/clear', async (req, res) => {
   try {
-    db.clearUnbookmarkQueue();
+    await db.clearUnbookmarkQueue();
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: String(err) });
@@ -767,9 +767,9 @@ app.post('/api/unbookmark-queue/clear', (req, res) => {
 // ============== QUOTED TWEETS ==============
 
 // Get status of quoted tweets (how many are missing)
-app.get('/api/quoted-tweets/status', (req, res) => {
+app.get('/api/quoted-tweets/status', async (req, res) => {
   try {
-    const missing = db.getBookmarksWithMissingQuotedTweets();
+    const missing = await db.getBookmarksWithMissingQuotedTweets();
     res.json({
       missing: missing.length,
       urls: missing.map(m => m.quoted_post_url),
@@ -782,7 +782,7 @@ app.get('/api/quoted-tweets/status', (req, res) => {
 // Fetch and cache missing quoted tweets
 app.post('/api/quoted-tweets/fetch', async (req, res) => {
   try {
-    const missing = db.getBookmarksWithMissingQuotedTweets();
+    const missing = await db.getBookmarksWithMissingQuotedTweets();
 
     if (missing.length === 0) {
       return res.json({ fetched: 0, failed: 0, message: 'All quoted tweets already cached' });
@@ -801,7 +801,7 @@ app.post('/api/quoted-tweets/fetch', async (req, res) => {
       try {
         const tweet = await fetchTweet(bookmark.quoted_post_url);
         if (tweet) {
-          db.insertCachedTweet(tweet);
+          await db.insertCachedTweet(tweet);
           results.fetched++;
           console.log(`Cached quoted tweet ${tweet.tweet_id} by @${tweet.author_handle}`);
         } else {
@@ -826,9 +826,9 @@ app.post('/api/quoted-tweets/fetch', async (req, res) => {
 // ============== ROUTING ==============
 
 // Helper function to queue tweet for unbookmarking after successful routing
-function queueForUnbookmark(bookmarkId: string, tweetId: string, authorHandle: string): void {
+async function queueForUnbookmark(bookmarkId: string, tweetId: string, authorHandle: string): void {
   try {
-    db.addToUnbookmarkQueue({
+    await db.addToUnbookmarkQueue({
       id: uuidv4(),
       tweet_id: tweetId,
       bookmark_id: bookmarkId,
@@ -843,7 +843,7 @@ function queueForUnbookmark(bookmarkId: string, tweetId: string, authorHandle: s
 // Legacy function for X API unbookmarking (if configured)
 async function tryUnbookmarkAfterRoute(tweetId: string): Promise<void> {
   try {
-    const destinations = db.getAllDestinations();
+    const destinations = await db.getAllDestinations();
     const xAccount = destinations.find(d => d.type === 'x');
 
     if (!xAccount) return; // No X account connected, skip API unbookmarking
@@ -856,7 +856,7 @@ async function tryUnbookmarkAfterRoute(tweetId: string): Promise<void> {
 
     // Update tokens if refreshed
     if (result.newTokens) {
-      db.updateDestinationConfig(xAccount.id, {
+      await db.updateDestinationConfig(xAccount.id, {
         ...xAccount.config,
         access_token: result.newTokens.access_token,
         refresh_token: result.newTokens.refresh_token,
@@ -877,12 +877,12 @@ app.post('/api/route', async (req, res) => {
   try {
     const { bookmark_id, destination_id } = req.body;
 
-    const bookmark = db.getBookmarkById(bookmark_id);
+    const bookmark = await db.getBookmarkById(bookmark_id);
     if (!bookmark) {
       return res.status(404).json({ error: 'Bookmark not found' });
     }
 
-    const destinations = db.getAllDestinations();
+    const destinations = await db.getAllDestinations();
     const destination = destinations.find(d => d.id === destination_id);
     if (!destination) {
       return res.status(404).json({ error: 'Destination not found' });
@@ -924,7 +924,7 @@ app.post('/api/route', async (req, res) => {
     }
 
     // Log to routing history
-    db.insertRoutingHistory({
+    await db.insertRoutingHistory({
       id: uuidv4(),
       bookmark_id,
       destination_id,
@@ -935,7 +935,7 @@ app.post('/api/route', async (req, res) => {
 
     // Update bookmark status if successful
     if (result.success) {
-      db.updateBookmarkStatus(bookmark_id, 'routed');
+      await db.updateBookmarkStatus(bookmark_id, 'routed');
       // Queue for unbookmarking via Chrome extension
       queueForUnbookmark(bookmark_id, bookmark.tweet_id, bookmark.author_handle);
     }
@@ -964,14 +964,14 @@ app.post('/api/route/bulk', async (req, res) => {
     for (const bookmark_id of bookmark_ids) {
       try {
         // Reuse the single route logic via internal call
-        const bookmark = db.getBookmarkById(bookmark_id);
+        const bookmark = await db.getBookmarkById(bookmark_id);
         if (!bookmark) {
           results.failed++;
           results.errors.push(`Bookmark ${bookmark_id} not found`);
           continue;
         }
 
-        const destinations = db.getAllDestinations();
+        const destinations = await db.getAllDestinations();
         const destination = destinations.find(d => d.id === destination_id);
         if (!destination) {
           results.failed++;
@@ -1011,7 +1011,7 @@ app.post('/api/route/bulk', async (req, res) => {
             result = { success: false, error: `Unsupported destination type: ${destination.type}` };
         }
 
-        db.insertRoutingHistory({
+        await db.insertRoutingHistory({
           id: uuidv4(),
           bookmark_id,
           destination_id,
@@ -1021,7 +1021,7 @@ app.post('/api/route/bulk', async (req, res) => {
         });
 
         if (result.success) {
-          db.updateBookmarkStatus(bookmark_id, 'routed');
+          await db.updateBookmarkStatus(bookmark_id, 'routed');
           // Queue for unbookmarking via Chrome extension
           queueForUnbookmark(bookmark_id, bookmark.tweet_id, bookmark.author_handle);
           results.success++;
@@ -1071,19 +1071,19 @@ app.post('/api/bookmarks/delete', (req, res) => {
     if (alsoUnbookmark) {
       console.log(`[DELETE] Queueing for unbookmark...`);
       for (const id of bookmarkIds) {
-        const bookmark = db.getBookmarkById(id);
+        const bookmark = await db.getBookmarkById(id);
         console.log(`[DELETE] Bookmark ${id}: ${bookmark ? `tweet_id=${bookmark.tweet_id}` : 'NOT FOUND'}`);
         if (bookmark) {
           queueForUnbookmark(id, bookmark.tweet_id, bookmark.author_handle);
         }
       }
       // Check queue after adding
-      const queue = db.getUnbookmarkQueue();
+      const queue = await db.getUnbookmarkQueue();
       console.log(`[DELETE] Queue now has ${queue.length} items`);
     }
 
     // Pass keepQueue=true if we just added to the queue
-    db.deleteBookmarks(bookmarkIds, alsoUnbookmark);
+    await db.deleteBookmarks(bookmarkIds, alsoUnbookmark);
     res.json({ success: true, deleted: bookmarkIds.length });
   } catch (err) {
     console.error('[DELETE] Error:', err);
@@ -1263,9 +1263,13 @@ app.get('/{*splat}', (req, res) => {
 
 // ============== START SERVER ==============
 
-app.listen(PORT, () => {
-  console.log(`Bookmark Sort API running on http://localhost:${PORT}`);
-});
+// Initialize database and start server
+(async () => {
+  await db.initDb();
+  app.listen(PORT, () => {
+    console.log(`Bookmark Sort API running on http://localhost:${PORT}`);
+  });
+})();
 
 // Graceful shutdown
 process.on('SIGINT', async () => {
