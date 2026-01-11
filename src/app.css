@@ -1,0 +1,308 @@
+@import "tailwindcss";
+
+:root {
+  /* Tight color palette - just 3 colors */
+  --bg-primary: #f8fafc;
+  --bg-card: #ffffff;
+  --bg-hover: #f1f5f9;
+  --bg-selected: #eff6ff;
+
+  --text-primary: #0f172a;
+  --text-secondary: #475569;
+  --text-muted: #94a3b8;
+
+  --border-light: #e2e8f0;
+  --border-medium: #cbd5e1;
+
+  /* Single accent color with variants */
+  --accent: #3b82f6;
+  --accent-hover: #2563eb;
+  --accent-light: #dbeafe;
+
+  /* Semantic colors - used sparingly */
+  --success: #10b981;
+  --success-light: #d1fae5;
+  --danger: #ef4444;
+  --danger-light: #fee2e2;
+
+  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
+  --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.08);
+
+  /* Spacing scale */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+#app {
+  min-height: 100vh;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--border-medium);
+  border-radius: 3px;
+}
+
+/* Focus states */
+*:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* Transitions */
+button, a, input, select {
+  transition: all 0.15s ease;
+}
+
+/* Custom checkbox */
+input[type="checkbox"] {
+  appearance: none;
+  width: 16px;
+  height: 16px;
+  border: 1.5px solid var(--border-medium);
+  border-radius: 3px;
+  background: white;
+  cursor: pointer;
+  flex-shrink: 0;
+}
+
+input[type="checkbox"]:checked {
+  background: var(--accent);
+  border-color: var(--accent);
+  background-image: url("data:image/svg+xml,%3csvg viewBox='0 0 16 16' fill='white' xmlns='http://www.w3.org/2000/svg'%3e%3cpath d='M12.207 4.793a1 1 0 010 1.414l-5 5a1 1 0 01-1.414 0l-2-2a1 1 0 011.414-1.414L6.5 9.086l4.293-4.293a1 1 0 011.414 0z'/%3e%3c/svg%3e");
+  background-size: 12px;
+  background-position: center;
+  background-repeat: no-repeat;
+}
+
+input[type="checkbox"]:hover {
+  border-color: var(--accent);
+}
+
+/* Input styles */
+input[type="text"], select, textarea {
+  border: 1px solid var(--border-light);
+  background: white;
+  border-radius: 6px;
+  font-size: 13px;
+  padding: 6px 10px;
+}
+
+input[type="text"]:focus, select:focus, textarea:focus {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-light);
+}
+
+/* Buttons */
+.btn {
+  font-weight: 500;
+  font-size: 13px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  border: none;
+}
+
+.btn-primary {
+  background: var(--accent);
+  color: white;
+}
+
+.btn-primary:hover {
+  background: var(--accent-hover);
+}
+
+.btn-secondary {
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+}
+
+.btn-secondary:hover {
+  background: var(--border-light);
+}
+
+.btn-danger {
+  background: var(--danger-light);
+  color: var(--danger);
+}
+
+.btn-danger:hover {
+  background: #fecaca;
+}
+
+/* Card */
+.card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-light);
+  border-radius: 8px;
+  transition: all 0.15s ease;
+}
+
+.card:hover {
+  border-color: var(--border-medium);
+}
+
+.card.selected {
+  border-color: var(--accent);
+  background: var(--bg-selected);
+}
+
+/* Dropdown */
+.dropdown {
+  background: white;
+  border: 1px solid var(--border-light);
+  border-radius: 6px;
+  box-shadow: var(--shadow-md);
+}
+
+/* Badges */
+.badge {
+  font-size: 11px;
+  font-weight: 500;
+  padding: 2px 6px;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.badge-success {
+  background: var(--success-light);
+  color: #065f46;
+}
+
+.badge-muted {
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+}
+
+/* Modal backdrop */
+.modal-backdrop {
+  background: rgba(15, 23, 42, 0.4);
+  backdrop-filter: blur(4px);
+}
+
+/* Sticky action bar */
+.action-bar {
+  background: white;
+  border-top: 1px solid var(--border-light);
+  box-shadow: 0 -4px 12px rgba(0, 0, 0, 0.05);
+}
+
+/* Action bar sections */
+.action-section {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.action-divider {
+  width: 1px;
+  height: 24px;
+  background: var(--border-light);
+  margin: 0 4px;
+}
+
+/* Mobile responsive styles */
+@media (max-width: 768px) {
+  body {
+    font-size: 16px; /* Prevent zoom on input focus */
+  }
+
+  .btn {
+    padding: 10px 16px;
+    font-size: 14px;
+  }
+
+  input[type="text"], select, textarea {
+    font-size: 16px; /* Prevent zoom */
+    padding: 10px 12px;
+  }
+
+  /* Stack action bar vertically on mobile */
+  .action-bar {
+    flex-direction: column;
+    gap: 8px;
+    padding: 12px;
+  }
+
+  .action-section {
+    width: 100%;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+
+  .action-divider {
+    display: none;
+  }
+
+  /* Cards need more padding for touch */
+  .card {
+    padding: 12px;
+  }
+
+  /* Modals should be full width on mobile */
+  .modal-backdrop > div {
+    width: 95% !important;
+    max-width: none !important;
+    margin: 10px;
+    max-height: 90vh;
+  }
+
+  /* Hide scrollbars on mobile */
+  ::-webkit-scrollbar {
+    display: none;
+  }
+
+  /* Larger touch targets */
+  input[type="checkbox"] {
+    width: 22px;
+    height: 22px;
+  }
+
+  /* Badge slightly larger */
+  .badge {
+    font-size: 12px;
+    padding: 4px 8px;
+  }
+}
+
+/* Small mobile */
+@media (max-width: 480px) {
+  .btn {
+    padding: 12px 14px;
+    width: 100%;
+  }
+
+  .action-section {
+    flex-direction: column;
+  }
+
+  .action-section .btn {
+    width: 100%;
+  }
+}
