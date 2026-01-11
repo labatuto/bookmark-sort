@@ -126,9 +126,32 @@ npm run dev:all          # Start both concurrently
 npm run build            # Build for production
 npm run preview          # Preview production build
 
+# Production / Mobile Access
+npm run start            # Start production server (serves built frontend)
+./start-mobile.sh        # Build + start server + ngrok tunnel for mobile
+
 # Type checking
 npm run check            # Run svelte-check and TypeScript
 ```
+
+## Mobile Access
+
+The app is a PWA (Progressive Web App) that can be installed on your phone:
+
+1. **First time setup** (one time):
+   ```bash
+   ngrok config add-authtoken YOUR_TOKEN  # Get token at https://dashboard.ngrok.com
+   ```
+
+2. **Start mobile server**:
+   ```bash
+   ./start-mobile.sh
+   ```
+
+3. **On your phone**:
+   - Open the ngrok URL shown in terminal
+   - Tap "Add to Home Screen" (Safari) or "Install" (Chrome)
+   - Use like a native app
 
 ## API Rate Limits to Respect
 
