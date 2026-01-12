@@ -4,6 +4,15 @@
   import * as api from './lib/api';
   import type { Bookmark, Destination } from './lib/types';
 
+  // View mode: 'swipe' for Tinder-style, 'list' for power user view
+  let viewMode: 'swipe' | 'list' = 'list';
+  let currentSwipeIndex = 0;
+  let swipeDirection: 'left' | 'right' | null = null;
+  let swipeOffset = 0;
+  let isDragging = false;
+  let startX = 0;
+  let showRouteOptions = false;
+
   let showImportModal = false;
   let showSettingsModal = false;
   let importContent = '';
@@ -54,6 +63,9 @@
   let notionSearchTimeout: number;
   let showNotionDropdown = false;
 
+  // Mobile filter panel
+  let showFilterPanel = false;
+
   // Load data on mount
   onMount(async () => {
     try {
@@ -63,11 +75,8 @@
       ]);
       bookmarks.set(bookmarkData);
       destinations.set(destData);
-      // Pre-load Google accounts (await to ensure ready)
       await loadGoogleAccounts();
-      // Load X status
       await loadXStatus();
-      // Load Notion status
       await loadNotionStatus();
     } catch (err) {
       console.error('Failed to load data:', err);
@@ -130,6 +139,7 @@
         clearSelection();
         const data = await api.fetchBookmarks();
         bookmarks.set(data);
+        showStatus(`Sent to ${page.title}`);
       }
       notionSearchQuery = '';
       notionSearchResults = [];
@@ -173,7 +183,6 @@
     try {
       const result = await api.importBookmarks(importContent);
       importStatus = `Imported ${result.imported}, ${result.duplicates} duplicates, ${result.errors} errors. Done!`;
-      // Refresh bookmarks
       const data = await api.fetchBookmarks();
       bookmarks.set(data);
     } catch (err) {
@@ -181,14 +190,12 @@
     }
   }
 
-  // Sync folders only (won't re-add deleted tweets)
   async function handleSyncFolders() {
     if (!importContent.trim()) return;
     importStatus = 'Syncing folders...';
     try {
       const result = await api.syncFolders(importContent);
       importStatus = result.message;
-      // Refresh bookmarks to show updated folders
       const data = await api.fetchBookmarks();
       bookmarks.set(data);
     } catch (err) {
@@ -198,19 +205,20 @@
 
   // Selection
   function toggleSelection(id: string) {
-    selectedIds.update(set => {
-      const newSet = new Set(set);
-      if (newSet.has(id)) {
-        newSet.delete(id);
+    selectedIds.update(ids => {
+      const newIds = new Set(ids);
+      if (newIds.has(id)) {
+        newIds.delete(id);
       } else {
-        newSet.add(id);
+        newIds.add(id);
       }
-      return newSet;
+      return newIds;
     });
   }
 
   function selectAll() {
-    selectedIds.set(new Set($filteredBookmarks.map(b => b.id)));
+    const all = new Set($filteredBookmarks.map(b => b.id));
+    selectedIds.set(all);
   }
 
   function clearSelection() {
@@ -218,44 +226,27 @@
   }
 
   // Routing
-  async function routeToDestination(bookmarkId: string, destId: string) {
-    try {
-      await api.routeBookmark(bookmarkId, destId);
-      // Refresh
-      const data = await api.fetchBookmarks();
-      bookmarks.set(data);
-    } catch (err) {
-      console.error('Route failed:', err);
-    }
-  }
-
-  async function bulkRoute(destId: string) {
+  async function bulkRoute(destinationId: string) {
     const ids = Array.from($selectedIds);
     if (ids.length === 0) return;
     try {
-      await api.routeBookmarksBulk(ids, destId);
+      await api.routeBookmarksBulk(ids, destinationId);
       clearSelection();
       const data = await api.fetchBookmarks();
       bookmarks.set(data);
+      showStatus(`Routed ${ids.length} bookmarks`);
     } catch (err) {
       console.error('Bulk route failed:', err);
     }
   }
 
-  function formatDate(dateStr: string | undefined) {
-    if (!dateStr) return '';
-    const date = new Date(dateStr);
-    return date.toLocaleDateString();
-  }
-
-  // Google Drive functions
+  // Google Docs
   async function loadGoogleAccounts() {
     try {
-      googleAccounts = await api.fetchGoogleAccounts();
-      if (googleAccounts.length > 0) {
-        // Prefer santi@ifp.org (has full Drive access), fallback to first
-        const ifpAccount = googleAccounts.find(a => a.email === 'santi@ifp.org');
-        activeGoogleAccount = ifpAccount?.id || googleAccounts[0].id;
+      const accounts = await api.fetchGoogleAccounts();
+      googleAccounts = accounts;
+      if (accounts.length > 0 && !activeGoogleAccount) {
+        activeGoogleAccount = accounts[0].id;
       }
     } catch (err) {
       console.error('Failed to load Google accounts:', err);
@@ -274,87 +265,56 @@
       return;
     }
 
-    // Set searching immediately so UI doesn't flash "No docs found"
     isSearchingDocs = true;
 
     docSearchTimeout = setTimeout(async () => {
-      if (!activeGoogleAccount) {
-        await loadGoogleAccounts();
-      }
-      if (!activeGoogleAccount) {
-        isSearchingDocs = false;
-        return;
-      }
-
       try {
         const results = await api.searchGoogleDocs(value, activeGoogleAccount);
-        docSearchResults = results;
-        showDocDropdown = results.length > 0;
+        docSearchResults = results.files || [];
+        showDocDropdown = docSearchResults.length > 0;
       } catch (err) {
-        console.error('Doc search failed:', err);
+        console.error('Google Docs search failed:', err);
         docSearchResults = [];
       } finally {
         isSearchingDocs = false;
       }
-    }, 300);
-  }
-
-  function showStatus(msg: string, duration = 3000) {
-    clearTimeout(statusTimeout);
-    statusMessage = msg;
-    statusTimeout = setTimeout(() => { statusMessage = ''; }, duration);
+    }, 400);
   }
 
   async function sendSelectedToDoc(doc: { id: string; name: string }) {
     const ids = Array.from($selectedIds);
     if (ids.length === 0) return;
 
-    // Check for bookmarks already sent to this doc
-    const selectedBookmarks = $bookmarks.filter(b => ids.includes(b.id));
-    const alreadySent = selectedBookmarks.filter(b =>
-      b.routed_to?.some((r: { type: string; name: string }) => r.name === `📄 ${doc.name}` || r.name === doc.name)
-    );
-
-    if (alreadySent.length > 0) {
-      const proceed = confirm(
-        `${alreadySent.length} of ${ids.length} bookmark(s) have already been sent to "${doc.name}". Send anyway?`
-      );
-      if (!proceed) return;
-    }
-
     try {
-      const result = await api.sendToGoogleDoc(ids, doc.id, doc.name, activeGoogleAccount);
-      if (result.success > 0) {
-        showStatus(`Sent ${result.success} bookmark(s) to "${doc.name}"`);
-        clearSelection();
-        const data = await api.fetchBookmarks();
-        bookmarks.set(data);
-      }
+      await api.sendToGoogleDoc(ids, doc.id, doc.name, activeGoogleAccount);
+      clearSelection();
+      const data = await api.fetchBookmarks();
+      bookmarks.set(data);
+      showStatus(`Sent to ${doc.name}`);
       docSearchQuery = '';
       docSearchResults = [];
       showDocDropdown = false;
     } catch (err) {
-      console.error('Send to doc failed:', err);
-      alert('Failed to send to doc: ' + err);
+      console.error('Send to Google Doc failed:', err);
+      alert('Failed to send to Google Doc: ' + err);
     }
   }
 
   async function createNewDocWithSelected() {
-    const ids = Array.from($selectedIds);
-    if (ids.length === 0 || !newDocTitle.trim()) return;
-
+    if (!newDocTitle.trim() || isCreatingDoc) return;
     isCreatingDoc = true;
     try {
-      const result = await api.createDocWithTweets(ids, newDocTitle.trim(), activeGoogleAccount);
-      if (result.success > 0) {
-        clearSelection();
-        const data = await api.fetchBookmarks();
-        bookmarks.set(data);
-        // Open the new doc in a new tab
+      const ids = Array.from($selectedIds);
+      const result = await api.createDocWithTweets(ids, newDocTitle, activeGoogleAccount);
+      if (result.docUrl) {
         window.open(result.docUrl, '_blank');
       }
+      clearSelection();
+      const data = await api.fetchBookmarks();
+      bookmarks.set(data);
       showNewDocModal = false;
       newDocTitle = '';
+      showStatus('Created new doc');
     } catch (err) {
       console.error('Create doc failed:', err);
       alert('Failed to create doc: ' + err);
@@ -363,417 +323,490 @@
     }
   }
 
+  // Folder management
   async function moveSelectedToFolder(folder: string | null) {
     const ids = Array.from($selectedIds);
     if (ids.length === 0) return;
-
     try {
       await api.moveToFolder(ids, folder);
       clearSelection();
       const data = await api.fetchBookmarks();
       bookmarks.set(data);
+      showStatus(folder ? `Moved to ${folder}` : 'Removed from folder');
     } catch (err) {
       console.error('Move to folder failed:', err);
-      alert('Failed to move to folder: ' + err);
     }
   }
 
-  // Delete from Bookmark Sort and queue for unbookmarking from Twitter
-  function deleteSelected() {
+  // Delete
+  async function deleteSelected() {
     const ids = Array.from($selectedIds);
     if (ids.length === 0) return;
-
-    api.deleteBookmarks(ids, true)
-      .then(() => {
-        clearSelection();
-        return api.fetchBookmarks();
-      })
-      .then(data => bookmarks.set(data))
-      .catch(err => {
-        console.error('Delete failed:', err);
-        alert('Failed to delete: ' + err);
-      });
+    if (!confirm(`Delete ${ids.length} bookmark${ids.length > 1 ? 's' : ''}?`)) return;
+    try {
+      await api.deleteBookmarks(ids, false);
+      clearSelection();
+      const data = await api.fetchBookmarks();
+      bookmarks.set(data);
+      showStatus(`Deleted ${ids.length} bookmarks`);
+    } catch (err) {
+      console.error('Delete failed:', err);
+    }
   }
+
+  function showStatus(message: string) {
+    statusMessage = message;
+    clearTimeout(statusTimeout);
+    statusTimeout = setTimeout(() => {
+      statusMessage = '';
+    }, 2500);
+  }
+
+  function formatDate(dateStr: string) {
+    if (!dateStr) return '';
+    const d = new Date(dateStr);
+    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  }
+
+  // Swipe handlers
+  function handleTouchStart(e: TouchEvent) {
+    if (viewMode !== 'swipe') return;
+    isDragging = true;
+    startX = e.touches[0].clientX;
+    swipeOffset = 0;
+  }
+
+  function handleTouchMove(e: TouchEvent) {
+    if (!isDragging || viewMode !== 'swipe') return;
+    const currentX = e.touches[0].clientX;
+    swipeOffset = currentX - startX;
+
+    if (swipeOffset > 50) {
+      swipeDirection = 'right';
+    } else if (swipeOffset < -50) {
+      swipeDirection = 'left';
+    } else {
+      swipeDirection = null;
+    }
+  }
+
+  function handleTouchEnd() {
+    if (!isDragging || viewMode !== 'swipe') return;
+    isDragging = false;
+
+    const threshold = 100;
+    const currentBookmark = $filteredBookmarks[currentSwipeIndex];
+
+    if (swipeOffset > threshold && currentBookmark) {
+      // Swipe right - Keep (show routing options)
+      showRouteOptions = true;
+    } else if (swipeOffset < -threshold && currentBookmark) {
+      // Swipe left - Discard
+      handleDiscard(currentBookmark);
+    }
+
+    swipeOffset = 0;
+    swipeDirection = null;
+  }
+
+  async function handleDiscard(bookmark: Bookmark) {
+    try {
+      await api.deleteBookmarks([bookmark.id], false);
+      const data = await api.fetchBookmarks();
+      bookmarks.set(data);
+      showStatus('Discarded');
+      // Move to next card
+      if (currentSwipeIndex >= $filteredBookmarks.length) {
+        currentSwipeIndex = Math.max(0, $filteredBookmarks.length - 1);
+      }
+    } catch (err) {
+      console.error('Discard failed:', err);
+    }
+  }
+
+  async function handleKeepAndRoute(bookmark: Bookmark, destinationType: string, destinationId?: string) {
+    showRouteOptions = false;
+    try {
+      if (destinationType === 'folder') {
+        await api.moveToFolder([bookmark.id], destinationId || 'saved');
+      } else if (destinationId) {
+        await api.routeBookmarksBulk([bookmark.id], destinationId);
+      }
+      const data = await api.fetchBookmarks();
+      bookmarks.set(data);
+      showStatus('Saved!');
+      // Move to next card
+      currentSwipeIndex = Math.min(currentSwipeIndex + 1, $filteredBookmarks.length - 1);
+    } catch (err) {
+      console.error('Route failed:', err);
+    }
+  }
+
+  function skipCard() {
+    currentSwipeIndex = Math.min(currentSwipeIndex + 1, $filteredBookmarks.length - 1);
+    showRouteOptions = false;
+  }
+
+  function previousCard() {
+    currentSwipeIndex = Math.max(currentSwipeIndex - 1, 0);
+    showRouteOptions = false;
+  }
+
+  // Get current filter label
+  $: currentFilterLabel = $filters.folder || ($filters.status !== 'all' ? ($filters.status === 'pending' ? 'Not routed' : 'Routed') : 'All bookmarks');
 </script>
 
-<div class="min-h-screen" style="background: var(--bg-primary);">
+<div class="app-container">
   <!-- Loading Overlay -->
   {#if isLoading}
-    <div class="fixed inset-0 z-50 flex items-center justify-center" style="background: var(--bg-primary);">
-      <div class="flex flex-col items-center gap-4">
-        <div class="loading-spinner"></div>
-        <span class="text-sm" style="color: var(--text-muted);">Loading bookmarks...</span>
+    <div class="loading-overlay">
+      <div class="loading-spinner"></div>
+      <span class="loading-text">Loading bookmarks...</span>
+    </div>
+  {/if}
+
+  <!-- Mobile Header -->
+  <header class="mobile-header">
+    <div class="header-content">
+      <div class="header-left">
+        <svg class="header-icon" fill="currentColor" viewBox="0 0 24 24">
+          <path d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z"/>
+        </svg>
+        <span class="header-title">Bookmark Sort</span>
+      </div>
+      <div class="header-right">
+        <button class="icon-btn" onclick={() => showSettingsModal = true}>
+          <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+          </svg>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- View Mode Toggle -->
+  <div class="view-toggle-bar">
+    <button
+      class="view-toggle-btn {viewMode === 'swipe' ? 'active' : ''}"
+      onclick={() => { viewMode = 'swipe'; currentSwipeIndex = 0; }}
+    >
+      <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"/>
+      </svg>
+      Swipe
+    </button>
+    <button
+      class="view-toggle-btn {viewMode === 'list' ? 'active' : ''}"
+      onclick={() => viewMode = 'list'}
+    >
+      <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 10h16M4 14h16M4 18h16"/>
+      </svg>
+      List
+    </button>
+  </div>
+
+  <!-- Filter Bar -->
+  <div class="filter-bar">
+    <button class="filter-chip {!$filters.folder && $filters.status === 'all' ? 'active' : ''}" onclick={() => { filters.set({ status: 'all', folder: null, tag: null }); showFilterPanel = false; }}>
+      All
+    </button>
+    <button class="filter-chip" onclick={() => showFilterPanel = !showFilterPanel}>
+      {currentFilterLabel}
+      <svg class="filter-chevron {showFilterPanel ? 'open' : ''}" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/>
+      </svg>
+    </button>
+    <button class="filter-chip" onclick={() => showImportModal = true}>
+      + Import
+    </button>
+  </div>
+
+  <!-- Filter Panel (Expandable) -->
+  {#if showFilterPanel}
+    <div class="filter-panel">
+      <div class="filter-section">
+        <span class="filter-label">Folders</span>
+        <div class="filter-options">
+          <button
+            class="filter-option {!$filters.folder ? 'active' : ''}"
+            onclick={() => { filters.update(f => ({ ...f, folder: null })); showFilterPanel = false; }}
+          >
+            All Folders
+          </button>
+          {#each $folders as folder}
+            <button
+              class="filter-option {$filters.folder === folder ? 'active' : ''}"
+              onclick={() => { filters.update(f => ({ ...f, folder })); showFilterPanel = false; }}
+            >
+              {folder}
+            </button>
+          {/each}
+        </div>
+      </div>
+      <div class="filter-section">
+        <span class="filter-label">Status</span>
+        <div class="filter-options">
+          <button
+            class="filter-option {$filters.status === 'all' ? 'active' : ''}"
+            onclick={() => { filters.update(f => ({ ...f, status: 'all' })); showFilterPanel = false; }}
+          >
+            All
+          </button>
+          <button
+            class="filter-option {$filters.status === 'pending' ? 'active' : ''}"
+            onclick={() => { filters.update(f => ({ ...f, status: 'pending' })); showFilterPanel = false; }}
+          >
+            Not routed
+          </button>
+          <button
+            class="filter-option {$filters.status === 'routed' ? 'active' : ''}"
+            onclick={() => { filters.update(f => ({ ...f, status: 'routed' })); showFilterPanel = false; }}
+          >
+            Routed
+          </button>
+        </div>
       </div>
     </div>
   {/if}
 
-  <!-- Header -->
-  <header class="bg-white border-b" style="border-color: var(--border-light);">
-    <div class="flex items-center justify-between max-w-5xl mx-auto px-5 py-3">
-      <div class="flex items-center gap-2">
-        <svg class="w-5 h-5" style="color: var(--accent);" fill="currentColor" viewBox="0 0 24 24">
-          <path d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z"/>
-        </svg>
-        <span class="font-semibold" style="color: var(--text-primary);">Bookmark Sort</span>
-      </div>
-      <button onclick={() => showSettingsModal = true} class="btn btn-secondary">
-        Settings
-      </button>
-    </div>
-  </header>
+  <!-- Context Bar -->
+  <div class="context-bar">
+    <span class="context-count">{$filteredBookmarks.length} bookmarks</span>
+    {#if $filters.folder}
+      <span class="context-folder">in {$filters.folder}</span>
+    {/if}
+    {#if viewMode === 'swipe' && $filteredBookmarks.length > 0}
+      <span class="context-progress">{currentSwipeIndex + 1} of {$filteredBookmarks.length}</span>
+    {/if}
+  </div>
 
-  <main class="max-w-5xl mx-auto px-5 py-6">
-    <!-- Toolbar -->
-    <div class="flex items-center gap-3 mb-5">
-      <div class="flex-1 relative">
-        <svg class="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4" style="color: var(--text-muted);" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
-        </svg>
-        <input
-          type="text"
-          placeholder="Search bookmarks..."
-          value={searchInput}
-          oninput={handleSearchInput}
-          class="w-full pl-9 pr-3"
-        />
-      </div>
-      <select
-        value={$filters.folder || ''}
-        onchange={(e) => filters.update(f => ({ ...f, folder: (e.target as HTMLSelectElement).value || null }))}
-      >
-        <option value="">All Folders</option>
-        {#each $folders as folder}
-          <option value={folder}>{folder}</option>
-        {/each}
-      </select>
-      <select
-        value={$filters.status}
-        onchange={(e) => filters.update(f => ({ ...f, status: (e.target as HTMLSelectElement).value as any }))}
-      >
-        <option value="all">All</option>
-        <option value="pending">Not routed</option>
-        <option value="routed">Routed</option>
-      </select>
-      <button onclick={() => showImportModal = true} class="btn btn-primary">
-        Import
-      </button>
-    </div>
+  <!-- Main Content -->
+  <main class="main-content">
+    {#if viewMode === 'swipe'}
+      <!-- Swipe View -->
+      <div class="swipe-container">
+        {#if $filteredBookmarks.length === 0}
+          <div class="empty-state">
+            <p>No bookmarks to sort</p>
+          </div>
+        {:else}
+          {@const currentBookmark = $filteredBookmarks[currentSwipeIndex]}
+          {#if currentBookmark}
+            <div
+              class="swipe-card {swipeDirection}"
+              style="transform: translateX({swipeOffset}px) rotate({swipeOffset * 0.02}deg);"
+              ontouchstart={handleTouchStart}
+              ontouchmove={handleTouchMove}
+              ontouchend={handleTouchEnd}
+            >
+              <!-- Swipe Indicators -->
+              <div class="swipe-indicator left {swipeDirection === 'left' ? 'active' : ''}">
+                <span>DISCARD</span>
+              </div>
+              <div class="swipe-indicator right {swipeDirection === 'right' ? 'active' : ''}">
+                <span>KEEP</span>
+              </div>
 
-    <!-- Stats row -->
-    <div class="flex items-center gap-3 mb-4 text-sm" style="color: var(--text-secondary);">
-      <span style="color: var(--text-primary); font-weight: 500;">{$filteredBookmarks.length} bookmarks</span>
-      <span style="color: var(--border-medium);">·</span>
-      <button onclick={selectAll} class="hover:underline" style="color: var(--accent);">Select all</button>
-      {#if $selectedIds.size > 0}
-        <span style="color: var(--border-medium);">·</span>
-        <span>{$selectedIds.size} selected</span>
-        <button onclick={clearSelection} class="hover:underline" style="color: var(--text-muted);">Clear</button>
-      {/if}
-    </div>
+              <!-- Card Content -->
+              <div class="swipe-card-content">
+                <div class="swipe-card-header">
+                  <span class="author">@{currentBookmark.author_handle}</span>
+                  <span class="date">{formatDate(currentBookmark.created_at)}</span>
+                </div>
+                {#if currentBookmark.archivly_folder}
+                  <span class="folder-badge">{currentBookmark.archivly_folder}</span>
+                {/if}
+                <p class="tweet-text">{currentBookmark.text}</p>
 
-    <!-- Bulk Actions (inline - hidden when sticky bar shows) -->
-    {#if $selectedIds.size > 0 && $selectedIds.size <= 0}
-      <div class="action-bar flex items-center gap-3 mb-6 p-4 flex-wrap">
-        <span class="text-sm font-medium" style="color: var(--text-primary);">Send {$selectedIds.size} selected to:</span>
+                {#if currentBookmark.media_urls?.length > 0 && currentBookmark.media_urls[0].startsWith('http')}
+                  <img src={currentBookmark.media_urls[0]} alt="" class="tweet-image" />
+                {/if}
 
-        <!-- Existing destinations -->
-        {#each $destinations.filter(d => d.type === 'instapaper') as dest}
-          <button
-            onclick={() => bulkRoute(dest.id)}
-            class="px-3 py-1.5 text-sm font-medium text-white rounded-lg"
-            style="background: var(--accent);"
-          >
-            {dest.name}
-          </button>
-        {/each}
+                {#if currentBookmark.urls?.length > 0}
+                  <a href={currentBookmark.urls[0]} target="_blank" class="tweet-link">
+                    {#if currentBookmark.link_title}
+                      <span class="link-title">{currentBookmark.link_title}</span>
+                    {/if}
+                    <span class="link-url">{currentBookmark.urls[0].replace(/^https?:\/\/(www\.)?/, '').slice(0, 50)}</span>
+                  </a>
+                {/if}
 
-        <!-- Google Doc search -->
-        <div class="relative">
-          <input
-            type="text"
-            placeholder="Search Google Docs..."
-            value={docSearchQuery}
-            oninput={handleDocSearch}
-            onfocus={() => { if (docSearchResults.length > 0) showDocDropdown = true; }}
-            class="px-3 py-1.5 rounded-lg text-sm w-52"
-            style="border: 1px solid var(--border-medium); background: white;"
-          />
-          {#if isSearchingDocs}
-            <span class="absolute right-2 top-1/2 -translate-y-1/2 text-xs" style="color: var(--text-muted);">...</span>
-          {/if}
+                <a href="https://x.com/{currentBookmark.author_handle}/status/{currentBookmark.tweet_id}" target="_blank" class="view-on-x">
+                  View on X →
+                </a>
+              </div>
+            </div>
 
-          <!-- Dropdown results -->
-          {#if showDocDropdown && docSearchResults.length > 0}
-            <div class="dropdown absolute top-full left-0 mt-2 z-50 max-h-64 overflow-auto" style="width: 400px;">
-              {#each docSearchResults as doc}
-                <button
-                  onclick={() => sendSelectedToDoc(doc)}
-                  class="w-full text-left px-3 py-2.5 text-sm hover:bg-gray-50 border-b last:border-0"
-                  style="border-color: var(--border-light); white-space: normal; line-height: 1.4;"
-                  title={doc.name}
-                >
-                  {doc.name}
-                </button>
-              {/each}
+            <!-- Route Options Overlay -->
+            {#if showRouteOptions}
+              <div class="route-overlay">
+                <div class="route-panel">
+                  <h3>Route to:</h3>
+                  <div class="route-options">
+                    {#each $folders as folder}
+                      <button class="route-btn folder" onclick={() => handleKeepAndRoute(currentBookmark, 'folder', folder)}>
+                        📁 {folder}
+                      </button>
+                    {/each}
+                    {#each $destinations.filter(d => d.type === 'instapaper') as dest}
+                      <button class="route-btn" onclick={() => handleKeepAndRoute(currentBookmark, 'instapaper', dest.id)}>
+                        📖 {dest.name}
+                      </button>
+                    {/each}
+                    <button class="route-btn new-folder" onclick={() => handleKeepAndRoute(currentBookmark, 'folder', 'saved')}>
+                      + Save for later
+                    </button>
+                  </div>
+                  <button class="route-cancel" onclick={() => showRouteOptions = false}>Cancel</button>
+                </div>
+              </div>
+            {/if}
+
+            <!-- Swipe Controls -->
+            <div class="swipe-controls">
+              <button class="swipe-btn discard" onclick={() => handleDiscard(currentBookmark)}>
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+                </svg>
+              </button>
+              <button class="swipe-btn skip" onclick={skipCard}>
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 5l7 7-7 7M5 5l7 7-7 7"/>
+                </svg>
+              </button>
+              <button class="swipe-btn keep" onclick={() => showRouteOptions = true}>
+                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                </svg>
+              </button>
             </div>
           {/if}
+        {/if}
+      </div>
+
+    {:else}
+      <!-- List View -->
+      <div class="list-container">
+        <!-- Search Bar -->
+        <div class="search-bar">
+          <svg class="search-icon" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+          </svg>
+          <input
+            type="text"
+            placeholder="Search bookmarks..."
+            value={searchInput}
+            oninput={handleSearchInput}
+            class="search-input"
+          />
         </div>
 
-        {#if docSearchQuery && docSearchResults.length === 0 && !isSearchingDocs}
-          <span class="text-xs" style="color: var(--text-muted);">No docs found</span>
-        {/if}
-
-        <!-- Notion search (if configured) -->
-        {#if notionStatus.connected}
-          <div class="relative">
-            <input
-              type="text"
-              placeholder="Search Notion pages..."
-              value={notionSearchQuery}
-              oninput={handleNotionSearch}
-              onfocus={() => { if (notionSearchResults.length > 0) showNotionDropdown = true; }}
-              class="px-3 py-1.5 rounded-lg text-sm w-52"
-              style="border: 1px solid var(--border-medium); background: white;"
-            />
-            {#if isSearchingNotion}
-              <span class="absolute right-2 top-1/2 -translate-y-1/2 text-xs" style="color: var(--text-muted);">...</span>
-            {/if}
-
-            <!-- Dropdown results -->
-            {#if showNotionDropdown && notionSearchResults.length > 0}
-              <div class="dropdown absolute top-full left-0 mt-2 w-80 z-50 max-h-64 overflow-auto">
-                {#each notionSearchResults as page}
-                  <button
-                    onclick={() => sendSelectedToNotion(page)}
-                    class="w-full text-left px-3 py-2.5 text-sm hover:bg-gray-50 border-b last:border-0"
-                    style="border-color: var(--border-light);"
-                  >
-                    {page.title}
-                  </button>
-                {/each}
-              </div>
-            {/if}
+        <!-- Selection Bar -->
+        {#if $selectedIds.size > 0}
+          <div class="selection-bar">
+            <span class="selection-count">{$selectedIds.size} selected</span>
+            <button class="selection-btn" onclick={clearSelection}>Clear</button>
+            <button class="selection-btn" onclick={selectAll}>Select All</button>
           </div>
-
-          {#if notionSearchQuery && notionSearchResults.length === 0 && !isSearchingNotion}
-            <span class="text-xs" style="color: var(--text-muted);">No pages found</span>
-          {/if}
+        {:else}
+          <div class="selection-bar">
+            <button class="selection-btn" onclick={selectAll}>Select All</button>
+          </div>
         {/if}
 
-        <!-- Create New Doc button -->
-        <button
-          onclick={() => showNewDocModal = true}
-          class="px-3 py-1.5 text-sm font-medium text-white rounded-lg"
-          style="background: var(--success);"
-        >
-          + New Doc
-        </button>
-      </div>
-    {/if}
-
-    <!-- Bookmark List -->
-    <div class="grid grid-cols-1 lg:grid-cols-2 gap-3 pb-safe">
-      {#each $filteredBookmarks as bookmark (bookmark.id)}
-        <div
-          class="card cursor-pointer {$selectedIds.has(bookmark.id) ? 'selected' : ''}"
-          onclick={() => toggleSelection(bookmark.id)}
-          style="padding: 12px;"
-        >
-          <div class="flex gap-3">
-            <input
-              type="checkbox"
-              checked={$selectedIds.has(bookmark.id)}
-              onclick={(e) => e.stopPropagation()}
-              onchange={() => toggleSelection(bookmark.id)}
-              style="margin-top: 2px;"
-            />
-
-            <div class="flex-1 min-w-0">
-              <!-- Header -->
-              <div class="flex items-center gap-2 mb-1">
-                <span class="font-medium text-sm" style="color: var(--text-primary);">@{bookmark.author_handle}</span>
-                <span class="text-xs" style="color: var(--text-muted);">{formatDate(bookmark.created_at)}</span>
-                {#if bookmark.archivly_folder}
-                  <span class="badge badge-muted ml-auto">{bookmark.archivly_folder}</span>
-                {/if}
-              </div>
-
-              <!-- Routed badges -->
-              {#if bookmark.routed_to && bookmark.routed_to.length > 0}
-                <div class="flex flex-wrap gap-1 mb-2">
-                  {#each bookmark.routed_to as dest}
-                    <span class="badge badge-success">{dest.name}</span>
-                  {/each}
-                </div>
-              {/if}
-
-              <!-- Text -->
-              <p class="text-sm leading-relaxed whitespace-pre-wrap" style="color: var(--text-primary);">{bookmark.text}</p>
-
-              <!-- Quoted Tweet -->
-              {#if bookmark.quoted_post_url}
-                {@const quotedMatch = bookmark.quoted_post_url.match(/(?:twitter\.com|x\.com)\/(\w+)\/status\/(\d+)/)}
-                <a
-                  href={bookmark.quoted_post_url}
-                  target="_blank"
-                  rel="noopener"
+        <!-- Bookmark Cards -->
+        <div class="bookmark-list">
+          {#each $filteredBookmarks as bookmark (bookmark.id)}
+            <div
+              class="bookmark-card {$selectedIds.has(bookmark.id) ? 'selected' : ''}"
+              onclick={() => toggleSelection(bookmark.id)}
+            >
+              <div class="bookmark-checkbox">
+                <input
+                  type="checkbox"
+                  checked={$selectedIds.has(bookmark.id)}
                   onclick={(e) => e.stopPropagation()}
-                  class="mt-2 block rounded-lg p-3"
-                  style="background: var(--bg-hover); border: 1px solid var(--border-light);"
-                >
-                  <div class="flex items-center gap-2 mb-1">
-                    <svg class="w-3 h-3" style="color: var(--text-muted);" fill="currentColor" viewBox="0 0 24 24">
-                      <path d="M4 4.5A2.5 2.5 0 0 1 6.5 2H18a2.5 2.5 0 0 1 2.5 2.5v14.25a.75.75 0 0 1-.75.75H5.5a1 1 0 0 0 1 1h14.25a.75.75 0 0 1 0 1.5H6.5A2.5 2.5 0 0 1 4 19.5V4.5Zm4.75 4a.75.75 0 0 0 0 1.5h6.5a.75.75 0 0 0 0-1.5h-6.5Zm-.75 4.75a.75.75 0 0 0 .75.75h6.5a.75.75 0 0 0 0-1.5h-6.5a.75.75 0 0 0-.75.75Z"/>
-                    </svg>
-                    <span class="text-xs font-medium" style="color: var(--accent);">
-                      @{bookmark.quoted_tweet?.author_handle || quotedMatch?.[1] || 'unknown'}
-                    </span>
-                  </div>
-                  {#if bookmark.quoted_tweet}
-                    <p class="text-xs leading-relaxed mt-1" style="color: var(--text-secondary);">
-                      {bookmark.quoted_tweet.text.length > 200 ? bookmark.quoted_tweet.text.slice(0, 200) + '...' : bookmark.quoted_tweet.text}
-                    </p>
-                  {:else}
-                    <span class="text-xs" style="color: var(--text-muted);">View quoted post →</span>
-                  {/if}
-                </a>
-              {/if}
-
-              <!-- Image -->
-              {#if bookmark.media_urls && bookmark.media_urls.length > 0 && bookmark.media_urls[0].startsWith('http')}
-                <img
-                  src={bookmark.media_urls[0]}
-                  alt=""
-                  class="mt-3 rounded w-full object-cover cursor-pointer"
-                  style="max-height: 140px;"
-                  onclick={(e) => { e.stopPropagation(); window.open(bookmark.media_urls[0], '_blank'); }}
+                  onchange={() => toggleSelection(bookmark.id)}
                 />
-              {/if}
-
-              <!-- Link with title -->
-              {#if bookmark.urls.length > 0}
-                <a
-                  href={bookmark.urls[0]}
-                  target="_blank"
-                  rel="noopener"
-                  class="mt-2 block rounded-lg p-2"
-                  style="background: var(--bg-hover); border: 1px solid var(--border-light);"
-                  onclick={(e) => e.stopPropagation()}
-                >
-                  {#if bookmark.link_title}
-                    <div class="text-sm font-medium mb-1" style="color: var(--text-primary);">{bookmark.link_title}</div>
+              </div>
+              <div class="bookmark-content">
+                <div class="bookmark-header">
+                  <span class="bookmark-author">@{bookmark.author_handle}</span>
+                  <span class="bookmark-date">{formatDate(bookmark.created_at)}</span>
+                  {#if bookmark.archivly_folder}
+                    <span class="bookmark-folder">{bookmark.archivly_folder}</span>
                   {/if}
-                  <div class="text-xs truncate" style="color: var(--accent);">
-                    {bookmark.urls[0].replace(/^https?:\/\/(www\.)?/, '').slice(0, 60)}
-                  </div>
-                </a>
-              {/if}
+                </div>
 
-              <!-- Footer -->
-              <div class="mt-3 flex items-center gap-4 text-xs" style="color: var(--text-muted);">
+                {#if bookmark.routed_to?.length > 0}
+                  <div class="bookmark-routes">
+                    {#each bookmark.routed_to as dest}
+                      <span class="route-badge">{dest.name}</span>
+                    {/each}
+                  </div>
+                {/if}
+
+                <p class="bookmark-text">{bookmark.text}</p>
+
+                {#if bookmark.media_urls?.length > 0 && bookmark.media_urls[0].startsWith('http')}
+                  <img src={bookmark.media_urls[0]} alt="" class="bookmark-image" />
+                {/if}
+
+                {#if bookmark.urls?.length > 0}
+                  <a href={bookmark.urls[0]} target="_blank" class="bookmark-link" onclick={(e) => e.stopPropagation()}>
+                    {#if bookmark.link_title}
+                      <span class="link-title">{bookmark.link_title}</span>
+                    {/if}
+                    <span class="link-url">{bookmark.urls[0].replace(/^https?:\/\/(www\.)?/, '').slice(0, 50)}</span>
+                  </a>
+                {/if}
+
                 <a
                   href="https://x.com/{bookmark.author_handle}/status/{bookmark.tweet_id}"
                   target="_blank"
-                  rel="noopener"
-                  class="hover:underline"
-                  style="color: var(--accent);"
+                  class="bookmark-view-link"
                   onclick={(e) => e.stopPropagation()}
                 >
                   View on X
                 </a>
               </div>
             </div>
-          </div>
-        </div>
-      {:else}
-        <div class="col-span-full text-center py-16" style="color: var(--text-muted);">
-          {#if $stats.total === 0}
-            No bookmarks yet. Click Import to add some.
           {:else}
-            No bookmarks match your filters.
-          {/if}
+            <div class="empty-state">
+              {#if $stats.total === 0}
+                No bookmarks yet. Tap Import to add some.
+              {:else}
+                No bookmarks match your filters.
+              {/if}
+            </div>
+          {/each}
         </div>
-      {/each}
-    </div>
+      </div>
+    {/if}
   </main>
 
-  <!-- Sticky Action Bar -->
-  {#if $selectedIds.size > 0}
-    <div class="action-bar fixed bottom-0 left-0 right-0 z-40">
-      <div class="max-w-5xl mx-auto px-5 py-3 flex items-center gap-3 flex-wrap">
-        <!-- Selection count -->
-        <span class="text-sm font-medium" style="color: var(--text-primary);">{$selectedIds.size} selected</span>
+  <!-- Sticky Action Bar (List View) -->
+  {#if viewMode === 'list' && $selectedIds.size > 0}
+    <div class="action-bar">
+      <div class="action-bar-content">
+        <span class="action-count">{$selectedIds.size} selected</span>
 
-        <div class="action-divider"></div>
+        <div class="action-buttons">
+          <!-- Quick Actions -->
+          {#each $destinations.filter(d => d.type === 'instapaper').slice(0, 1) as dest}
+            <button class="action-btn primary" onclick={() => bulkRoute(dest.id)}>
+              {dest.name}
+            </button>
+          {/each}
 
-        <!-- Route section -->
-        <span class="text-xs uppercase tracking-wide" style="color: var(--text-muted);">Route</span>
-        {#each $destinations.filter(d => d.type === 'instapaper') as dest}
-          <button onclick={() => bulkRoute(dest.id)} class="btn btn-primary">{dest.name}</button>
-        {/each}
-        <div class="relative">
-          <input
-            type="text"
-            placeholder="Search docs..."
-            value={docSearchQuery}
-            oninput={handleDocSearch}
-            onfocus={() => { if (docSearchResults.length > 0) showDocDropdown = true; }}
-            style="width: 130px;"
-          />
-          {#if showDocDropdown && docSearchResults.length > 0}
-            <div class="dropdown absolute bottom-full mb-1 left-0 max-h-64 overflow-auto" style="width: 350px;">
-              {#each docSearchResults as doc}
-                <button
-                  class="w-full text-left px-3 py-2 text-sm"
-                  style="color: var(--text-primary); white-space: normal; line-height: 1.4;"
-                  title={doc.name}
-                  onmouseenter={(e) => (e.target as HTMLElement).style.background = 'var(--bg-hover)'}
-                  onmouseleave={(e) => (e.target as HTMLElement).style.background = 'transparent'}
-                  onclick={() => sendSelectedToDoc(doc)}
-                >
-                  {doc.name}
-                </button>
-              {/each}
-            </div>
-          {/if}
-        </div>
-        <button onclick={() => showNewDocModal = true} class="btn btn-secondary">+ New Doc</button>
+          <button class="action-btn" onclick={() => showNewDocModal = true}>
+            + New Doc
+          </button>
 
-        <div class="action-divider"></div>
-
-        <!-- Organize section -->
-        <span class="text-xs uppercase tracking-wide" style="color: var(--text-muted);">Organize</span>
-        {#if showNewFolderInput}
-          <input
-            type="text"
-            bind:value={newFolderName}
-            placeholder="Folder name..."
-            class="px-2 py-1 text-sm rounded"
-            style="width: 120px; border: 1px solid var(--border-light);"
-            onkeydown={(e) => {
-              if (e.key === 'Enter' && newFolderName.trim()) {
-                moveSelectedToFolder(newFolderName.trim());
-                showNewFolderInput = false;
-                newFolderName = '';
-              } else if (e.key === 'Escape') {
-                showNewFolderInput = false;
-                newFolderName = '';
-              }
-            }}
-            autofocus
-          />
-          <button
-            onclick={() => {
-              if (newFolderName.trim()) {
-                moveSelectedToFolder(newFolderName.trim());
-              }
-              showNewFolderInput = false;
-              newFolderName = '';
-            }}
-            class="btn btn-secondary"
-          >OK</button>
-        {:else}
           <select
+            class="action-select"
             onchange={(e) => {
               const val = (e.target as HTMLSelectElement).value;
               if (val === '__new__') {
@@ -783,49 +816,42 @@
               }
               (e.target as HTMLSelectElement).value = '';
             }}
-            style="width: 130px;"
           >
             <option value="">Move to folder</option>
-            <option value="__new__">+ New folder</option>
             <option value="__none__">Remove folder</option>
             {#each $folders as folder}
               <option value={folder}>{folder}</option>
             {/each}
+            <option value="__new__">+ New folder</option>
           </select>
-        {/if}
 
-        <div class="action-divider"></div>
-
-        <!-- Delete -->
-        <button onclick={() => deleteSelected()} class="btn btn-danger">Delete</button>
+          <button class="action-btn danger" onclick={deleteSelected}>
+            Delete
+          </button>
+        </div>
       </div>
     </div>
   {/if}
 
   <!-- Import Modal -->
   {#if showImportModal}
-    <div class="modal-backdrop fixed inset-0 flex items-center justify-center z-50">
-      <div class="bg-white rounded-lg p-5 max-w-xl w-full mx-4 max-h-[80vh] overflow-auto" style="box-shadow: var(--shadow-md);">
-        <h2 class="text-base font-semibold mb-1" style="color: var(--text-primary);">Import Bookmarks</h2>
-        <p class="text-sm mb-4" style="color: var(--text-muted);">
-          Paste your ArchivlyX export (CSV or JSON):
-        </p>
+    <div class="modal-backdrop" onclick={() => showImportModal = false}>
+      <div class="modal" onclick={(e) => e.stopPropagation()}>
+        <h2 class="modal-title">Import Bookmarks</h2>
+        <p class="modal-desc">Paste your ArchivlyX export (CSV or JSON):</p>
         <textarea
           bind:value={importContent}
           placeholder="Paste content here..."
-          class="w-full h-48 p-3 rounded font-mono text-xs"
-          style="border: 1px solid var(--border-light); resize: none;"
+          class="modal-textarea"
         ></textarea>
         {#if importStatus}
-          <p class="mt-2 text-sm" style="color: var(--text-secondary);">{importStatus}</p>
+          <p class="modal-status">{importStatus}</p>
         {/if}
-        <div class="mt-4 flex justify-between">
-          <button onclick={() => handleSyncFolders()} class="btn btn-secondary" title="Update folders for existing tweets without re-adding deleted ones">
-            Sync Folders Only
-          </button>
-          <div class="flex gap-2">
-            <button onclick={() => { showImportModal = false; importContent = ''; importStatus = ''; }} class="btn btn-secondary">Cancel</button>
-            <button onclick={handleImport} class="btn btn-primary">Import</button>
+        <div class="modal-actions">
+          <button onclick={handleSyncFolders} class="modal-btn secondary">Sync Folders Only</button>
+          <div class="modal-actions-right">
+            <button onclick={() => { showImportModal = false; importContent = ''; importStatus = ''; }} class="modal-btn secondary">Cancel</button>
+            <button onclick={handleImport} class="modal-btn primary">Import</button>
           </div>
         </div>
       </div>
@@ -834,53 +860,42 @@
 
   <!-- Settings Modal -->
   {#if showSettingsModal}
-    <div class="modal-backdrop fixed inset-0 flex items-center justify-center z-50">
-      <div class="bg-white rounded-lg p-5 max-w-md w-full mx-4" style="box-shadow: var(--shadow-md);">
-        <h2 class="text-base font-semibold mb-4" style="color: var(--text-primary);">Settings</h2>
+    <div class="modal-backdrop" onclick={() => showSettingsModal = false}>
+      <div class="modal" onclick={(e) => e.stopPropagation()}>
+        <h2 class="modal-title">Settings</h2>
 
-        <h3 class="text-xs uppercase tracking-wide mb-2" style="color: var(--text-muted);">Connected Accounts</h3>
-        <ul class="mb-4 space-y-1">
+        <h3 class="modal-section-title">Connected Accounts</h3>
+        <ul class="settings-list">
           {#each googleAccounts as account}
-            <li class="p-2 rounded text-sm flex items-center gap-2" style="background: var(--success-light); color: #065f46;">
-              ✓ Google: {account.email}
-            </li>
+            <li class="settings-item connected">✓ Google: {account.email}</li>
           {/each}
           {#if xStatus.connected}
-            <li class="p-2 rounded text-sm" style="background: var(--success-light); color: #065f46;">
-              ✓ X: @{xStatus.username}
-            </li>
+            <li class="settings-item connected">✓ X: @{xStatus.username}</li>
           {:else}
-            <li class="p-2 rounded text-sm" style="background: var(--bg-hover); color: var(--text-muted);">
-              X: Not connected
-            </li>
+            <li class="settings-item">X: Not connected</li>
           {/if}
           {#if notionStatus.connected}
-            <li class="p-2 rounded text-sm" style="background: var(--success-light); color: #065f46;">
-              ✓ Notion: {notionStatus.botName || 'Connected'}
-            </li>
+            <li class="settings-item connected">✓ Notion: {notionStatus.botName || 'Connected'}</li>
           {:else}
-            <li class="p-2 rounded text-sm" style="background: var(--bg-hover); color: var(--text-muted);">
-              Notion: Not connected
-            </li>
+            <li class="settings-item">Notion: Not connected</li>
           {/if}
         </ul>
 
-        <h3 class="text-xs uppercase tracking-wide mb-2" style="color: var(--text-muted);">Destinations</h3>
+        <h3 class="modal-section-title">Destinations</h3>
         {#if $destinations.filter(d => d.type !== 'x' && d.type !== 'google').length === 0}
-          <p class="text-sm mb-4" style="color: var(--text-muted);">No saved destinations.</p>
+          <p class="settings-empty">No saved destinations.</p>
         {:else}
-          <ul class="mb-4 space-y-1">
+          <ul class="settings-list">
             {#each $destinations.filter(d => d.type !== 'x' && d.type !== 'google') as dest}
-              <li class="flex items-center justify-between p-2 rounded text-sm" style="background: var(--bg-hover);">
-                <span style="color: var(--text-primary);">{dest.name}</span>
+              <li class="settings-item">
+                <span>{dest.name}</span>
                 <button
                   onclick={async () => {
                     await api.deleteDestination(dest.id);
                     const data = await api.fetchDestinations();
                     destinations.set(data);
                   }}
-                  class="text-xs hover:underline"
-                  style="color: var(--danger);"
+                  class="settings-remove"
                 >
                   Remove
                 </button>
@@ -889,8 +904,8 @@
           </ul>
         {/if}
 
-        <div class="flex justify-end mt-4">
-          <button onclick={() => showSettingsModal = false} class="btn btn-secondary">Close</button>
+        <div class="modal-actions">
+          <button onclick={() => showSettingsModal = false} class="modal-btn secondary">Close</button>
         </div>
       </div>
     </div>
@@ -898,25 +913,23 @@
 
   <!-- New Doc Modal -->
   {#if showNewDocModal}
-    <div class="modal-backdrop fixed inset-0 flex items-center justify-center z-50">
-      <div class="bg-white rounded-lg p-5 max-w-sm w-full mx-4" style="box-shadow: var(--shadow-md);">
-        <h2 class="text-base font-semibold mb-1" style="color: var(--text-primary);">New Google Doc</h2>
-        <p class="text-sm mb-4" style="color: var(--text-muted);">
-          {$selectedIds.size} tweet{$selectedIds.size === 1 ? '' : 's'} will be added.
-        </p>
+    <div class="modal-backdrop" onclick={() => showNewDocModal = false}>
+      <div class="modal small" onclick={(e) => e.stopPropagation()}>
+        <h2 class="modal-title">New Google Doc</h2>
+        <p class="modal-desc">{$selectedIds.size} tweet{$selectedIds.size === 1 ? '' : 's'} will be added.</p>
         <input
           type="text"
           bind:value={newDocTitle}
           placeholder="Document title..."
-          class="w-full mb-4"
+          class="modal-input"
           onkeydown={(e) => { if (e.key === 'Enter') createNewDocWithSelected(); }}
         />
-        <div class="flex justify-end gap-2">
-          <button onclick={() => { showNewDocModal = false; newDocTitle = ''; }} class="btn btn-secondary">Cancel</button>
+        <div class="modal-actions">
+          <button onclick={() => { showNewDocModal = false; newDocTitle = ''; }} class="modal-btn secondary">Cancel</button>
           <button
             onclick={createNewDocWithSelected}
             disabled={isCreatingDoc || !newDocTitle.trim()}
-            class="btn btn-primary disabled:opacity-50"
+            class="modal-btn primary"
           >
             {isCreatingDoc ? 'Creating...' : 'Create'}
           </button>
@@ -925,13 +938,997 @@
     </div>
   {/if}
 
-  <!-- Status Toast -->
-  {#if statusMessage}
-    <div
-      class="fixed bottom-20 left-1/2 -translate-x-1/2 px-4 py-2 rounded-lg text-sm font-medium text-white z-50"
-      style="background: var(--success); box-shadow: var(--shadow-md);"
-    >
-      {statusMessage}
+  <!-- New Folder Input Modal -->
+  {#if showNewFolderInput}
+    <div class="modal-backdrop" onclick={() => showNewFolderInput = false}>
+      <div class="modal small" onclick={(e) => e.stopPropagation()}>
+        <h2 class="modal-title">New Folder</h2>
+        <input
+          type="text"
+          bind:value={newFolderName}
+          placeholder="Folder name..."
+          class="modal-input"
+          onkeydown={(e) => {
+            if (e.key === 'Enter' && newFolderName.trim()) {
+              moveSelectedToFolder(newFolderName.trim());
+              showNewFolderInput = false;
+              newFolderName = '';
+            }
+          }}
+        />
+        <div class="modal-actions">
+          <button onclick={() => { showNewFolderInput = false; newFolderName = ''; }} class="modal-btn secondary">Cancel</button>
+          <button
+            onclick={() => {
+              if (newFolderName.trim()) {
+                moveSelectedToFolder(newFolderName.trim());
+                showNewFolderInput = false;
+                newFolderName = '';
+              }
+            }}
+            class="modal-btn primary"
+          >
+            Create
+          </button>
+        </div>
+      </div>
     </div>
   {/if}
+
+  <!-- Status Toast -->
+  {#if statusMessage}
+    <div class="toast">{statusMessage}</div>
+  {/if}
 </div>
+
+<style>
+  /* ===== CSS Variables ===== */
+  :global(:root) {
+    --bg-primary: #f8fafc;
+    --bg-card: #ffffff;
+    --bg-hover: #f1f5f9;
+    --text-primary: #0f172a;
+    --text-secondary: #475569;
+    --text-muted: #94a3b8;
+    --accent: #3b82f6;
+    --accent-light: #dbeafe;
+    --success: #10b981;
+    --success-light: #d1fae5;
+    --danger: #ef4444;
+    --danger-light: #fee2e2;
+    --border-light: #e2e8f0;
+    --border-medium: #cbd5e1;
+    --shadow-sm: 0 1px 2px rgba(0,0,0,0.05);
+    --shadow-md: 0 4px 6px rgba(0,0,0,0.07);
+    --shadow-lg: 0 10px 25px rgba(0,0,0,0.1);
+  }
+
+  /* ===== Base ===== */
+  .app-container {
+    min-height: 100vh;
+    background: var(--bg-primary);
+    padding-bottom: env(safe-area-inset-bottom);
+  }
+
+  /* ===== Loading ===== */
+  .loading-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 1rem;
+    background: var(--bg-primary);
+  }
+
+  .loading-spinner {
+    width: 40px;
+    height: 40px;
+    border: 3px solid var(--border-light);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+
+  @keyframes spin {
+    to { transform: rotate(360deg); }
+  }
+
+  .loading-text {
+    font-size: 14px;
+    color: var(--text-muted);
+  }
+
+  /* ===== Header ===== */
+  .mobile-header {
+    background: var(--bg-card);
+    border-bottom: 1px solid var(--border-light);
+    padding: 12px 16px;
+    padding-top: calc(12px + env(safe-area-inset-top));
+    position: sticky;
+    top: 0;
+    z-index: 50;
+  }
+
+  .header-content {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+  }
+
+  .header-left {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .header-icon {
+    width: 24px;
+    height: 24px;
+    color: var(--accent);
+  }
+
+  .header-title {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+
+  .icon-btn {
+    width: 40px;
+    height: 40px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+  }
+
+  .icon-btn svg {
+    width: 22px;
+    height: 22px;
+  }
+
+  /* ===== View Toggle ===== */
+  .view-toggle-bar {
+    display: flex;
+    gap: 8px;
+    padding: 12px 16px;
+    background: var(--bg-card);
+    border-bottom: 1px solid var(--border-light);
+  }
+
+  .view-toggle-btn {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 10px;
+    border-radius: 8px;
+    border: 1px solid var(--border-light);
+    background: var(--bg-primary);
+    color: var(--text-secondary);
+    font-size: 14px;
+    font-weight: 500;
+    transition: all 0.2s;
+  }
+
+  .view-toggle-btn svg {
+    width: 18px;
+    height: 18px;
+  }
+
+  .view-toggle-btn.active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: white;
+  }
+
+  /* ===== Filter Bar ===== */
+  .filter-bar {
+    display: flex;
+    gap: 8px;
+    padding: 12px 16px;
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+    background: var(--bg-card);
+    border-bottom: 1px solid var(--border-light);
+  }
+
+  .filter-bar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .filter-chip {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 8px 14px;
+    border-radius: 20px;
+    border: 1px solid var(--border-medium);
+    background: var(--bg-card);
+    color: var(--text-secondary);
+    font-size: 13px;
+    font-weight: 500;
+    white-space: nowrap;
+    transition: all 0.2s;
+  }
+
+  .filter-chip.active {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: white;
+  }
+
+  .filter-chevron {
+    width: 14px;
+    height: 14px;
+    transition: transform 0.2s;
+  }
+
+  .filter-chevron.open {
+    transform: rotate(180deg);
+  }
+
+  /* ===== Filter Panel ===== */
+  .filter-panel {
+    background: var(--bg-card);
+    border-bottom: 1px solid var(--border-light);
+    padding: 16px;
+  }
+
+  .filter-section {
+    margin-bottom: 16px;
+  }
+
+  .filter-section:last-child {
+    margin-bottom: 0;
+  }
+
+  .filter-label {
+    display: block;
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-muted);
+    margin-bottom: 8px;
+  }
+
+  .filter-options {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .filter-option {
+    padding: 8px 14px;
+    border-radius: 8px;
+    border: 1px solid var(--border-light);
+    background: var(--bg-primary);
+    color: var(--text-secondary);
+    font-size: 13px;
+    transition: all 0.2s;
+  }
+
+  .filter-option.active {
+    background: var(--accent-light);
+    border-color: var(--accent);
+    color: var(--accent);
+  }
+
+  /* ===== Context Bar ===== */
+  .context-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 16px;
+    font-size: 13px;
+    color: var(--text-muted);
+    background: var(--bg-primary);
+  }
+
+  .context-count {
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+
+  .context-folder {
+    color: var(--accent);
+  }
+
+  .context-progress {
+    margin-left: auto;
+    font-weight: 500;
+  }
+
+  /* ===== Main Content ===== */
+  .main-content {
+    padding-bottom: 100px;
+  }
+
+  /* ===== Swipe View ===== */
+  .swipe-container {
+    padding: 16px;
+    min-height: calc(100vh - 280px);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+  }
+
+  .swipe-card {
+    position: relative;
+    width: 100%;
+    max-width: 400px;
+    background: var(--bg-card);
+    border-radius: 16px;
+    box-shadow: var(--shadow-lg);
+    overflow: hidden;
+    touch-action: pan-y;
+    user-select: none;
+    transition: box-shadow 0.2s;
+  }
+
+  .swipe-card.left {
+    box-shadow: -8px 0 30px rgba(239, 68, 68, 0.3);
+  }
+
+  .swipe-card.right {
+    box-shadow: 8px 0 30px rgba(16, 185, 129, 0.3);
+  }
+
+  .swipe-indicator {
+    position: absolute;
+    top: 20px;
+    padding: 8px 16px;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 700;
+    letter-spacing: 1px;
+    opacity: 0;
+    transform: scale(0.8);
+    transition: all 0.2s;
+    z-index: 10;
+  }
+
+  .swipe-indicator.left {
+    right: 20px;
+    background: var(--danger-light);
+    color: var(--danger);
+    border: 2px solid var(--danger);
+  }
+
+  .swipe-indicator.right {
+    left: 20px;
+    background: var(--success-light);
+    color: var(--success);
+    border: 2px solid var(--success);
+  }
+
+  .swipe-indicator.active {
+    opacity: 1;
+    transform: scale(1);
+  }
+
+  .swipe-card-content {
+    padding: 20px;
+  }
+
+  .swipe-card-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+
+  .swipe-card-header .author {
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+
+  .swipe-card-header .date {
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+
+  .folder-badge {
+    display: inline-block;
+    padding: 4px 10px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 500;
+    background: var(--bg-hover);
+    color: var(--text-secondary);
+    margin-bottom: 12px;
+  }
+
+  .tweet-text {
+    font-size: 15px;
+    line-height: 1.5;
+    color: var(--text-primary);
+    white-space: pre-wrap;
+    margin-bottom: 12px;
+  }
+
+  .tweet-image {
+    width: 100%;
+    max-height: 200px;
+    object-fit: cover;
+    border-radius: 12px;
+    margin-bottom: 12px;
+  }
+
+  .tweet-link {
+    display: block;
+    padding: 12px;
+    border-radius: 10px;
+    background: var(--bg-hover);
+    border: 1px solid var(--border-light);
+    text-decoration: none;
+    margin-bottom: 12px;
+  }
+
+  .tweet-link .link-title {
+    display: block;
+    font-size: 14px;
+    font-weight: 500;
+    color: var(--text-primary);
+    margin-bottom: 4px;
+  }
+
+  .tweet-link .link-url {
+    display: block;
+    font-size: 12px;
+    color: var(--accent);
+  }
+
+  .view-on-x {
+    font-size: 13px;
+    color: var(--accent);
+    text-decoration: none;
+  }
+
+  /* ===== Swipe Controls ===== */
+  .swipe-controls {
+    display: flex;
+    justify-content: center;
+    gap: 20px;
+    margin-top: 24px;
+  }
+
+  .swipe-btn {
+    width: 60px;
+    height: 60px;
+    border-radius: 50%;
+    border: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    box-shadow: var(--shadow-md);
+    transition: all 0.2s;
+  }
+
+  .swipe-btn svg {
+    width: 28px;
+    height: 28px;
+  }
+
+  .swipe-btn.discard {
+    background: var(--danger-light);
+    color: var(--danger);
+  }
+
+  .swipe-btn.skip {
+    background: var(--bg-card);
+    color: var(--text-muted);
+    width: 50px;
+    height: 50px;
+  }
+
+  .swipe-btn.skip svg {
+    width: 22px;
+    height: 22px;
+  }
+
+  .swipe-btn.keep {
+    background: var(--success-light);
+    color: var(--success);
+  }
+
+  .swipe-btn:active {
+    transform: scale(0.95);
+  }
+
+  /* ===== Route Overlay ===== */
+  .route-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: flex-end;
+    justify-content: center;
+    z-index: 60;
+    padding: 16px;
+    padding-bottom: calc(16px + env(safe-area-inset-bottom));
+  }
+
+  .route-panel {
+    width: 100%;
+    max-width: 400px;
+    background: var(--bg-card);
+    border-radius: 20px;
+    padding: 24px;
+  }
+
+  .route-panel h3 {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 16px;
+  }
+
+  .route-options {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+    margin-bottom: 16px;
+  }
+
+  .route-btn {
+    padding: 14px 16px;
+    border-radius: 12px;
+    border: 1px solid var(--border-light);
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font-size: 15px;
+    text-align: left;
+    transition: all 0.2s;
+  }
+
+  .route-btn:active {
+    background: var(--bg-hover);
+  }
+
+  .route-btn.new-folder {
+    color: var(--accent);
+  }
+
+  .route-cancel {
+    width: 100%;
+    padding: 14px;
+    border-radius: 12px;
+    border: none;
+    background: var(--bg-hover);
+    color: var(--text-secondary);
+    font-size: 15px;
+    font-weight: 500;
+  }
+
+  /* ===== List View ===== */
+  .list-container {
+    padding: 0 16px;
+  }
+
+  .search-bar {
+    position: relative;
+    margin-bottom: 12px;
+  }
+
+  .search-icon {
+    position: absolute;
+    left: 14px;
+    top: 50%;
+    transform: translateY(-50%);
+    width: 18px;
+    height: 18px;
+    color: var(--text-muted);
+  }
+
+  .search-input {
+    width: 100%;
+    padding: 14px 14px 14px 44px;
+    border-radius: 12px;
+    border: 1px solid var(--border-light);
+    background: var(--bg-card);
+    font-size: 15px;
+    color: var(--text-primary);
+  }
+
+  .search-input:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+
+  .selection-bar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    margin-bottom: 12px;
+    font-size: 13px;
+  }
+
+  .selection-count {
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+
+  .selection-btn {
+    color: var(--accent);
+    background: none;
+    border: none;
+    font-size: 13px;
+    font-weight: 500;
+  }
+
+  /* ===== Bookmark Cards ===== */
+  .bookmark-list {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .bookmark-card {
+    background: var(--bg-card);
+    border-radius: 12px;
+    padding: 14px;
+    box-shadow: var(--shadow-sm);
+    display: flex;
+    gap: 12px;
+    transition: all 0.2s;
+  }
+
+  .bookmark-card.selected {
+    background: var(--accent-light);
+    box-shadow: 0 0 0 2px var(--accent);
+  }
+
+  .bookmark-checkbox {
+    padding-top: 2px;
+  }
+
+  .bookmark-checkbox input {
+    width: 20px;
+    height: 20px;
+    accent-color: var(--accent);
+  }
+
+  .bookmark-content {
+    flex: 1;
+    min-width: 0;
+  }
+
+  .bookmark-header {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 6px;
+  }
+
+  .bookmark-author {
+    font-weight: 600;
+    font-size: 14px;
+    color: var(--text-primary);
+  }
+
+  .bookmark-date {
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+
+  .bookmark-folder {
+    margin-left: auto;
+    padding: 3px 8px;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 500;
+    background: var(--bg-hover);
+    color: var(--text-secondary);
+  }
+
+  .bookmark-routes {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px;
+    margin-bottom: 8px;
+  }
+
+  .route-badge {
+    padding: 3px 8px;
+    border-radius: 10px;
+    font-size: 11px;
+    font-weight: 500;
+    background: var(--success-light);
+    color: #065f46;
+  }
+
+  .bookmark-text {
+    font-size: 14px;
+    line-height: 1.5;
+    color: var(--text-primary);
+    white-space: pre-wrap;
+    margin-bottom: 10px;
+  }
+
+  .bookmark-image {
+    width: 100%;
+    max-height: 150px;
+    object-fit: cover;
+    border-radius: 10px;
+    margin-bottom: 10px;
+  }
+
+  .bookmark-link {
+    display: block;
+    padding: 10px;
+    border-radius: 8px;
+    background: var(--bg-hover);
+    border: 1px solid var(--border-light);
+    text-decoration: none;
+    margin-bottom: 10px;
+  }
+
+  .bookmark-link .link-title {
+    display: block;
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-primary);
+    margin-bottom: 2px;
+  }
+
+  .bookmark-link .link-url {
+    display: block;
+    font-size: 11px;
+    color: var(--accent);
+  }
+
+  .bookmark-view-link {
+    font-size: 12px;
+    color: var(--accent);
+    text-decoration: none;
+  }
+
+  /* ===== Action Bar ===== */
+  .action-bar {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: var(--bg-card);
+    border-top: 1px solid var(--border-light);
+    padding: 12px 16px;
+    padding-bottom: calc(12px + env(safe-area-inset-bottom));
+    z-index: 50;
+  }
+
+  .action-bar-content {
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  .action-count {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+
+  .action-buttons {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  .action-btn {
+    padding: 10px 14px;
+    border-radius: 8px;
+    border: 1px solid var(--border-light);
+    background: var(--bg-card);
+    color: var(--text-primary);
+    font-size: 13px;
+    font-weight: 500;
+  }
+
+  .action-btn.primary {
+    background: var(--accent);
+    border-color: var(--accent);
+    color: white;
+  }
+
+  .action-btn.danger {
+    background: var(--danger-light);
+    border-color: var(--danger-light);
+    color: var(--danger);
+  }
+
+  .action-select {
+    padding: 10px 12px;
+    border-radius: 8px;
+    border: 1px solid var(--border-light);
+    background: var(--bg-card);
+    color: var(--text-primary);
+    font-size: 13px;
+  }
+
+  /* ===== Empty State ===== */
+  .empty-state {
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--text-muted);
+    font-size: 15px;
+  }
+
+  /* ===== Modals ===== */
+  .modal-backdrop {
+    position: fixed;
+    inset: 0;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 100;
+    padding: 16px;
+  }
+
+  .modal {
+    width: 100%;
+    max-width: 500px;
+    max-height: 80vh;
+    overflow-y: auto;
+    background: var(--bg-card);
+    border-radius: 16px;
+    padding: 24px;
+  }
+
+  .modal.small {
+    max-width: 360px;
+  }
+
+  .modal-title {
+    font-size: 18px;
+    font-weight: 600;
+    color: var(--text-primary);
+    margin-bottom: 8px;
+  }
+
+  .modal-desc {
+    font-size: 14px;
+    color: var(--text-muted);
+    margin-bottom: 16px;
+  }
+
+  .modal-textarea {
+    width: 100%;
+    height: 180px;
+    padding: 12px;
+    border-radius: 10px;
+    border: 1px solid var(--border-light);
+    background: var(--bg-primary);
+    font-size: 12px;
+    font-family: monospace;
+    resize: none;
+    margin-bottom: 12px;
+  }
+
+  .modal-input {
+    width: 100%;
+    padding: 14px;
+    border-radius: 10px;
+    border: 1px solid var(--border-light);
+    font-size: 15px;
+    margin-bottom: 16px;
+  }
+
+  .modal-status {
+    font-size: 13px;
+    color: var(--text-secondary);
+    margin-bottom: 12px;
+  }
+
+  .modal-actions {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 10px;
+  }
+
+  .modal-actions-right {
+    display: flex;
+    gap: 10px;
+  }
+
+  .modal-btn {
+    padding: 12px 20px;
+    border-radius: 10px;
+    border: none;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+  }
+
+  .modal-btn.primary {
+    background: var(--accent);
+    color: white;
+  }
+
+  .modal-btn.secondary {
+    background: var(--bg-hover);
+    color: var(--text-secondary);
+  }
+
+  .modal-btn:disabled {
+    opacity: 0.5;
+  }
+
+  .modal-section-title {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    color: var(--text-muted);
+    margin-bottom: 10px;
+    margin-top: 20px;
+  }
+
+  .modal-section-title:first-of-type {
+    margin-top: 0;
+  }
+
+  .settings-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .settings-item {
+    padding: 12px;
+    border-radius: 10px;
+    font-size: 14px;
+    background: var(--bg-hover);
+    color: var(--text-secondary);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+  }
+
+  .settings-item.connected {
+    background: var(--success-light);
+    color: #065f46;
+  }
+
+  .settings-remove {
+    font-size: 12px;
+    color: var(--danger);
+    background: none;
+    border: none;
+  }
+
+  .settings-empty {
+    font-size: 14px;
+    color: var(--text-muted);
+  }
+
+  /* ===== Toast ===== */
+  .toast {
+    position: fixed;
+    bottom: 100px;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 12px 20px;
+    border-radius: 12px;
+    background: var(--success);
+    color: white;
+    font-size: 14px;
+    font-weight: 500;
+    box-shadow: var(--shadow-lg);
+    z-index: 200;
+  }
+</style>
