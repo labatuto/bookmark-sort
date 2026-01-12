@@ -13,6 +13,12 @@
   let startX = 0;
   let showRouteOptions = false;
 
+  // Swipe route mode states
+  let swipeNewFolderMode = false;
+  let swipeNewFolderName = '';
+  let showNewDocModalForSwipe = false;
+  let swipeNewDocTitle = '';
+
   let showImportModal = false;
   let showSettingsModal = false;
   let importContent = '';
@@ -452,6 +458,43 @@
     showRouteOptions = false;
   }
 
+  // Send single bookmark to a Google Doc (for swipe mode)
+  async function sendSwipeToDoc(bookmark: Bookmark, doc: { id: string; name: string }) {
+    try {
+      await api.sendToGoogleDoc([bookmark.id], doc.id, doc.name, activeGoogleAccount);
+      const data = await api.fetchBookmarks();
+      bookmarks.set(data);
+      showStatus(`Sent to ${doc.name}`);
+      docSearchQuery = '';
+      docSearchResults = [];
+      currentSwipeIndex = Math.min(currentSwipeIndex + 1, $filteredBookmarks.length - 1);
+    } catch (err) {
+      console.error('Send to doc failed:', err);
+      alert('Failed to send to doc');
+    }
+  }
+
+  // Create new Google Doc with single bookmark (for swipe mode)
+  async function createSwipeDoc(bookmark: Bookmark) {
+    if (!swipeNewDocTitle.trim()) return;
+    try {
+      const result = await api.createDocWithTweets([bookmark.id], swipeNewDocTitle, activeGoogleAccount);
+      if (result.docUrl) {
+        window.open(result.docUrl, '_blank');
+      }
+      const data = await api.fetchBookmarks();
+      bookmarks.set(data);
+      showNewDocModalForSwipe = false;
+      showRouteOptions = false;
+      swipeNewDocTitle = '';
+      showStatus('Created new doc');
+      currentSwipeIndex = Math.min(currentSwipeIndex + 1, $filteredBookmarks.length - 1);
+    } catch (err) {
+      console.error('Create doc failed:', err);
+      alert('Failed to create doc');
+    }
+  }
+
   // Get current filter label
   $: currentFilterLabel = $filters.folder || ($filters.status !== 'all' ? ($filters.status === 'pending' ? 'Not routed' : 'Routed') : 'All bookmarks');
 </script>
@@ -641,25 +684,97 @@
 
             <!-- Route Options Overlay -->
             {#if showRouteOptions}
-              <div class="route-overlay">
-                <div class="route-panel">
+              <div class="route-overlay" onclick={() => showRouteOptions = false}>
+                <div class="route-panel" onclick={(e) => e.stopPropagation()}>
                   <h3>Route to:</h3>
+
+                  <!-- Google Docs Search -->
+                  {#if googleAccounts.length > 0}
+                    <div class="route-section">
+                      <input
+                        type="text"
+                        placeholder="Search Google Docs..."
+                        class="route-search-input"
+                        bind:value={docSearchQuery}
+                        oninput={handleDocSearch}
+                      />
+                      {#if isSearchingDocs}
+                        <div class="route-searching">Searching...</div>
+                      {/if}
+                      {#if docSearchResults.length > 0}
+                        <div class="route-doc-results">
+                          {#each docSearchResults as doc}
+                            <button class="route-btn doc" onclick={() => { sendSwipeToDoc(currentBookmark, doc); showRouteOptions = false; }}>
+                              📄 {doc.name}
+                            </button>
+                          {/each}
+                        </div>
+                      {/if}
+                      <button class="route-btn new-doc" onclick={() => { showNewDocModalForSwipe = true; }}>
+                        + New Google Doc
+                      </button>
+                    </div>
+                  {/if}
+
+                  <!-- Instapaper -->
+                  <button class="route-btn instapaper" onclick={() => handleKeepAndRoute(currentBookmark, 'instapaper', 'default')}>
+                    📖 Send to Instapaper
+                  </button>
+
+                  <!-- Folders -->
+                  <div class="route-section-title">Move to folder:</div>
                   <div class="route-options">
                     {#each $folders as folder}
                       <button class="route-btn folder" onclick={() => handleKeepAndRoute(currentBookmark, 'folder', folder)}>
                         📁 {folder}
                       </button>
                     {/each}
-                    {#each $destinations.filter(d => d.type === 'instapaper') as dest}
-                      <button class="route-btn" onclick={() => handleKeepAndRoute(currentBookmark, 'instapaper', dest.id)}>
-                        📖 {dest.name}
-                      </button>
-                    {/each}
-                    <button class="route-btn new-folder" onclick={() => handleKeepAndRoute(currentBookmark, 'folder', 'saved')}>
-                      + Save for later
+                    <button class="route-btn new-folder" onclick={() => { swipeNewFolderMode = true; }}>
+                      + New folder
                     </button>
                   </div>
+
                   <button class="route-cancel" onclick={() => showRouteOptions = false}>Cancel</button>
+                </div>
+              </div>
+            {/if}
+
+            <!-- New Folder Input for Swipe -->
+            {#if swipeNewFolderMode}
+              <div class="route-overlay" onclick={() => swipeNewFolderMode = false}>
+                <div class="route-panel small" onclick={(e) => e.stopPropagation()}>
+                  <h3>New Folder</h3>
+                  <input
+                    type="text"
+                    placeholder="Folder name..."
+                    class="route-search-input"
+                    bind:value={swipeNewFolderName}
+                    onkeydown={(e) => { if (e.key === 'Enter' && swipeNewFolderName.trim()) { handleKeepAndRoute(currentBookmark, 'folder', swipeNewFolderName.trim()); swipeNewFolderMode = false; swipeNewFolderName = ''; showRouteOptions = false; }}}
+                  />
+                  <div class="route-panel-actions">
+                    <button class="route-cancel" onclick={() => swipeNewFolderMode = false}>Cancel</button>
+                    <button class="route-confirm" onclick={() => { if (swipeNewFolderName.trim()) { handleKeepAndRoute(currentBookmark, 'folder', swipeNewFolderName.trim()); swipeNewFolderMode = false; swipeNewFolderName = ''; showRouteOptions = false; }}}>Create</button>
+                  </div>
+                </div>
+              </div>
+            {/if}
+
+            <!-- New Doc Modal for Swipe -->
+            {#if showNewDocModalForSwipe}
+              <div class="route-overlay" onclick={() => showNewDocModalForSwipe = false}>
+                <div class="route-panel small" onclick={(e) => e.stopPropagation()}>
+                  <h3>New Google Doc</h3>
+                  <input
+                    type="text"
+                    placeholder="Document title..."
+                    class="route-search-input"
+                    bind:value={swipeNewDocTitle}
+                    onkeydown={(e) => { if (e.key === 'Enter' && swipeNewDocTitle.trim()) createSwipeDoc(currentBookmark); }}
+                  />
+                  <div class="route-panel-actions">
+                    <button class="route-cancel" onclick={() => showNewDocModalForSwipe = false}>Cancel</button>
+                    <button class="route-confirm" onclick={() => createSwipeDoc(currentBookmark)}>Create</button>
+                  </div>
                 </div>
               </div>
             {/if}
@@ -1463,16 +1578,71 @@
   .route-panel {
     width: 100%;
     max-width: 400px;
+    max-height: 80vh;
     background: var(--bg-card);
     border-radius: 20px;
     padding: 24px;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  .route-panel.small {
+    max-height: auto;
   }
 
   .route-panel h3 {
-    font-size: 16px;
+    font-size: 18px;
     font-weight: 600;
     color: var(--text-primary);
     margin-bottom: 16px;
+    flex-shrink: 0;
+  }
+
+  .route-section {
+    margin-bottom: 16px;
+    flex-shrink: 0;
+  }
+
+  .route-section-title {
+    font-size: 13px;
+    font-weight: 600;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: 10px;
+    margin-top: 8px;
+  }
+
+  .route-search-input {
+    width: 100%;
+    padding: 12px 16px;
+    border-radius: 12px;
+    border: 1px solid var(--border-light);
+    background: var(--bg-primary);
+    color: var(--text-primary);
+    font-size: 15px;
+    margin-bottom: 10px;
+  }
+
+  .route-search-input:focus {
+    outline: none;
+    border-color: var(--accent);
+  }
+
+  .route-searching {
+    font-size: 13px;
+    color: var(--text-muted);
+    padding: 8px 0;
+  }
+
+  .route-doc-results {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    max-height: 150px;
+    overflow-y: auto;
+    margin-bottom: 10px;
   }
 
   .route-options {
@@ -1480,6 +1650,9 @@
     flex-direction: column;
     gap: 10px;
     margin-bottom: 16px;
+    max-height: 200px;
+    overflow-y: auto;
+    flex-shrink: 1;
   }
 
   .route-btn {
@@ -1491,14 +1664,47 @@
     font-size: 15px;
     text-align: left;
     transition: all 0.2s;
+    flex-shrink: 0;
   }
 
   .route-btn:active {
     background: var(--bg-hover);
   }
 
-  .route-btn.new-folder {
+  .route-btn.new-folder,
+  .route-btn.new-doc {
     color: var(--accent);
+    border-style: dashed;
+  }
+
+  .route-btn.instapaper {
+    background: #fefce8;
+    border-color: #fef08a;
+  }
+
+  .route-btn.doc {
+    background: #eff6ff;
+    border-color: #bfdbfe;
+  }
+
+  .route-panel-actions {
+    display: flex;
+    gap: 10px;
+    margin-top: 16px;
+  }
+
+  .route-panel-actions button {
+    flex: 1;
+  }
+
+  .route-confirm {
+    padding: 14px;
+    border-radius: 12px;
+    border: none;
+    background: var(--accent);
+    color: white;
+    font-size: 15px;
+    font-weight: 500;
   }
 
   .route-cancel {
@@ -1510,6 +1716,8 @@
     color: var(--text-secondary);
     font-size: 15px;
     font-weight: 500;
+    flex-shrink: 0;
+    margin-top: auto;
   }
 
   /* ===== List View ===== */
