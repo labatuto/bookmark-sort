@@ -1261,6 +1261,47 @@ app.get('/{*splat}', (req, res) => {
   }
 });
 
+// ============== DATA MIGRATION ==============
+
+app.get('/api/export-all', async (req, res) => {
+  try {
+    const bookmarks = await db.getAllBookmarks();
+    const destinations = await db.getAllDestinations();
+    const unbookmarkQueue = await db.getUnbookmarkQueue();
+    res.json({ version: 1, bookmarks, destinations, unbookmarkQueue });
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
+app.post('/api/import-all', async (req, res) => {
+  try {
+    const { bookmarks, destinations, unbookmarkQueue } = req.body;
+    let imported = { bookmarks: 0, destinations: 0, queue: 0 };
+
+    if (bookmarks) {
+      for (const b of bookmarks) {
+        await db.insertBookmark(b);
+        if (b.status !== 'pending') await db.updateBookmarkStatus(b.id, b.status);
+        imported.bookmarks++;
+      }
+    }
+    if (destinations) {
+      for (const d of destinations) {
+        try { await db.insertDestination(d); imported.destinations++; } catch (e) {}
+      }
+    }
+    if (unbookmarkQueue) {
+      for (const q of unbookmarkQueue) {
+        try { await db.addToUnbookmarkQueue(q); imported.queue++; } catch (e) {}
+      }
+    }
+    res.json({ success: true, imported });
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
 // ============== START SERVER ==============
 
 // Initialize database and start server
