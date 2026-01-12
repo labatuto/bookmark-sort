@@ -475,7 +475,7 @@
         <span class="header-title">Bookmark Sort</span>
       </div>
       <div class="header-right">
-        <button class="icon-btn" onclick={() => showSettingsModal = true}>
+        <button class="icon-btn" onclick={() => showSettingsModal = true} aria-label="Settings">
           <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
@@ -666,17 +666,17 @@
 
             <!-- Swipe Controls -->
             <div class="swipe-controls">
-              <button class="swipe-btn discard" onclick={() => handleDiscard(currentBookmark)}>
+              <button class="swipe-btn discard" onclick={() => handleDiscard(currentBookmark)} aria-label="Discard bookmark">
                 <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
                 </svg>
               </button>
-              <button class="swipe-btn skip" onclick={skipCard}>
+              <button class="swipe-btn skip" onclick={skipCard} aria-label="Skip to next">
                 <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 5l7 7-7 7M5 5l7 7-7 7"/>
                 </svg>
               </button>
-              <button class="swipe-btn keep" onclick={() => showRouteOptions = true}>
+              <button class="swipe-btn keep" onclick={() => showRouteOptions = true} aria-label="Keep and route">
                 <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
                 </svg>
@@ -721,7 +721,10 @@
           {#each $filteredBookmarks as bookmark (bookmark.id)}
             <div
               class="bookmark-card {$selectedIds.has(bookmark.id) ? 'selected' : ''}"
+              role="button"
+              tabindex="0"
               onclick={() => toggleSelection(bookmark.id)}
+              onkeydown={(e) => e.key === 'Enter' && toggleSelection(bookmark.id)}
             >
               <div class="bookmark-checkbox">
                 <input
@@ -835,8 +838,8 @@
 
   <!-- Import Modal -->
   {#if showImportModal}
-    <div class="modal-backdrop" onclick={() => showImportModal = false}>
-      <div class="modal" onclick={(e) => e.stopPropagation()}>
+    <div class="modal-backdrop" role="dialog" aria-modal="true" onclick={() => showImportModal = false} onkeydown={(e) => e.key === 'Escape' && (showImportModal = false)}>
+      <div class="modal" role="document" onclick={(e) => e.stopPropagation()}>
         <h2 class="modal-title">Import Bookmarks</h2>
         <p class="modal-desc">Paste your ArchivlyX export (CSV or JSON):</p>
         <textarea
@@ -860,8 +863,8 @@
 
   <!-- Settings Modal -->
   {#if showSettingsModal}
-    <div class="modal-backdrop" onclick={() => showSettingsModal = false}>
-      <div class="modal" onclick={(e) => e.stopPropagation()}>
+    <div class="modal-backdrop" role="dialog" aria-modal="true" onclick={() => showSettingsModal = false} onkeydown={(e) => e.key === 'Escape' && (showSettingsModal = false)}>
+      <div class="modal" role="document" onclick={(e) => e.stopPropagation()}>
         <h2 class="modal-title">Settings</h2>
 
         <h3 class="modal-section-title">Connected Accounts</h3>
@@ -913,8 +916,8 @@
 
   <!-- New Doc Modal -->
   {#if showNewDocModal}
-    <div class="modal-backdrop" onclick={() => showNewDocModal = false}>
-      <div class="modal small" onclick={(e) => e.stopPropagation()}>
+    <div class="modal-backdrop" role="dialog" aria-modal="true" onclick={() => showNewDocModal = false} onkeydown={(e) => e.key === 'Escape' && (showNewDocModal = false)}>
+      <div class="modal small" role="document" onclick={(e) => e.stopPropagation()}>
         <h2 class="modal-title">New Google Doc</h2>
         <p class="modal-desc">{$selectedIds.size} tweet{$selectedIds.size === 1 ? '' : 's'} will be added.</p>
         <input
@@ -940,8 +943,8 @@
 
   <!-- New Folder Input Modal -->
   {#if showNewFolderInput}
-    <div class="modal-backdrop" onclick={() => showNewFolderInput = false}>
-      <div class="modal small" onclick={(e) => e.stopPropagation()}>
+    <div class="modal-backdrop" role="dialog" aria-modal="true" onclick={() => showNewFolderInput = false} onkeydown={(e) => e.key === 'Escape' && (showNewFolderInput = false)}>
+      <div class="modal small" role="document" onclick={(e) => e.stopPropagation()}>
         <h2 class="modal-title">New Folder</h2>
         <input
           type="text"
