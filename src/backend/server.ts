@@ -1043,7 +1043,7 @@ app.post('/api/route/bulk', async (req, res) => {
 
 // ============== FOLDER MANAGEMENT ==============
 
-app.post('/api/bookmarks/move-to-folder', (req, res) => {
+app.post('/api/bookmarks/move-to-folder', async (req, res) => {
   try {
     const { bookmarkIds, folder } = req.body;
     if (!Array.isArray(bookmarkIds)) {
@@ -1058,7 +1058,7 @@ app.post('/api/bookmarks/move-to-folder', (req, res) => {
 
 // ============== DELETE BOOKMARKS ==============
 
-app.post('/api/bookmarks/delete', (req, res) => {
+app.post('/api/bookmarks/delete', async (req, res) => {
   try {
     const { bookmarkIds, alsoUnbookmark } = req.body;
     console.log(`[DELETE] Request: ${bookmarkIds?.length} bookmarks, alsoUnbookmark=${alsoUnbookmark}`);
@@ -1093,7 +1093,7 @@ app.post('/api/bookmarks/delete', (req, res) => {
 
 // ============== ROUTING HISTORY ==============
 
-app.get('/api/bookmarks/:id/history', (req, res) => {
+app.get('/api/bookmarks/:id/history', async (req, res) => {
   try {
     const history = db.getRoutingHistoryForBookmark(req.params.id);
     res.json(history);
@@ -1114,7 +1114,7 @@ function isBackfillableUrl(url: string): boolean {
 }
 
 // Get status of link_title backfill
-app.get('/api/backfill/link-titles/status', (req, res) => {
+app.get('/api/backfill/link-titles/status', async (req, res) => {
   try {
     const bookmarks = db.getBookmarksWithoutLinkTitles();
     // Filter to only those with actual article URLs
@@ -1191,7 +1191,7 @@ app.post('/api/backfill/link-titles', async (req, res) => {
 // ============== FOLDER SYNC (UPDATE ONLY, NO RE-ADD) ==============
 
 // Sync folders from ArchivlyX export without re-adding deleted tweets
-app.post('/api/sync-folders', (req, res) => {
+app.post('/api/sync-folders', async (req, res) => {
   try {
     const { content } = req.body;
     if (!content) {
