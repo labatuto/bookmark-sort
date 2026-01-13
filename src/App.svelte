@@ -1,8 +1,33 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import { bookmarks, searchQuery, searchResults, isSearching, selectedIds, filters, filteredBookmarks, stats, destinations, folders } from './stores/bookmarks';
   import * as api from './lib/api';
   import type { Bookmark, Destination } from './lib/types';
+
+  // Keyboard navigation
+  let focusedIndex = -1;
+  let searchInputRef: HTMLInputElement;
+
+  // Find Similar feature
+  let similarBookmarks: Bookmark[] = [];
+  let showSimilarPanel = false;
+  let similarSourceId: string | null = null;
+  let isLoadingSimilar = false;
+
+  // Quick filters
+  let quickFilters = {
+    hasLinks: false,
+    hasImages: false,
+    byAuthor: '' as string,
+  };
+
+  // Apply quick filters on top of store filters
+  $: displayedBookmarks = $filteredBookmarks.filter(b => {
+    if (quickFilters.hasLinks && (!b.urls || b.urls.length === 0)) return false;
+    if (quickFilters.hasImages && (!b.media_urls || b.media_urls.length === 0)) return false;
+    if (quickFilters.byAuthor && b.author_handle !== quickFilters.byAuthor) return false;
+    return true;
+  });
 
   let showImportModal = false;
   let showSettingsModal = false;
@@ -71,7 +96,91 @@
     } catch (err) {
       console.error('Failed to load data:', err);
     }
+
+    // Add keyboard shortcuts
+    document.addEventListener('keydown', handleKeyDown);
   });
+
+  onDestroy(() => {
+    document.removeEventListener('keydown', handleKeyDown);
+  });
+
+  // Keyboard shortcuts handler
+  function handleKeyDown(e: KeyboardEvent) {
+    // Skip if typing in an input
+    const target = e.target as HTMLElement;
+    if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
+      // But allow Escape to blur
+      if (e.key === 'Escape') {
+        target.blur();
+        focusedIndex = -1;
+      }
+      return;
+    }
+
+    const bookmarkList = $filteredBookmarks;
+
+    switch (e.key) {
+      case 'j': // Next item
+        e.preventDefault();
+        focusedIndex = Math.min(focusedIndex + 1, bookmarkList.length - 1);
+        scrollToFocused();
+        break;
+      case 'k': // Previous item
+        e.preventDefault();
+        focusedIndex = Math.max(focusedIndex - 1, 0);
+        scrollToFocused();
+        break;
+      case ' ': // Toggle selection
+        e.preventDefault();
+        if (focusedIndex >= 0 && focusedIndex < bookmarkList.length) {
+          toggleSelection(bookmarkList[focusedIndex].id);
+        }
+        break;
+      case '/': // Focus search
+        e.preventDefault();
+        searchInputRef?.focus();
+        break;
+      case 'Escape': // Clear selection and close panels
+        e.preventDefault();
+        clearSelection();
+        showSimilarPanel = false;
+        focusedIndex = -1;
+        break;
+      case 's': // Find similar for focused item
+        e.preventDefault();
+        if (focusedIndex >= 0 && focusedIndex < bookmarkList.length) {
+          findSimilar(bookmarkList[focusedIndex].id);
+        }
+        break;
+      case 'a': // Select all
+        if (e.metaKey || e.ctrlKey) {
+          e.preventDefault();
+          selectAll();
+        }
+        break;
+    }
+  }
+
+  function scrollToFocused() {
+    const element = document.querySelector(`[data-index="${focusedIndex}"]`);
+    element?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+
+  // Find similar bookmarks
+  async function findSimilar(bookmarkId: string) {
+    isLoadingSimilar = true;
+    similarSourceId = bookmarkId;
+    showSimilarPanel = true;
+    try {
+      similarBookmarks = await api.findSimilarBookmarks(bookmarkId, 8);
+    } catch (err) {
+      console.error('Find similar failed:', err);
+      similarBookmarks = [];
+    } finally {
+      isLoadingSimilar = false;
+    }
+  }
 
   async function loadXStatus() {
     try {
@@ -418,9 +527,10 @@
         </svg>
         <input
           type="text"
-          placeholder="Search bookmarks..."
+          placeholder="Search bookmarks... (press /)"
           value={searchInput}
           oninput={handleSearchInput}
+          bind:this={searchInputRef}
           class="w-full pl-9 pr-3"
         />
       </div>
@@ -446,9 +556,41 @@
       </button>
     </div>
 
+    <!-- Quick filter pills -->
+    <div class="flex items-center gap-2 mb-3 flex-wrap">
+      <span class="text-xs uppercase tracking-wide" style="color: var(--text-muted);">Quick filters:</span>
+      <button
+        onclick={() => quickFilters.hasLinks = !quickFilters.hasLinks}
+        class="px-2 py-1 text-xs rounded-full transition-colors"
+        style={quickFilters.hasLinks ? 'background: var(--accent); color: white;' : 'background: var(--bg-hover); color: var(--text-secondary);'}
+      >
+        Has links
+      </button>
+      <button
+        onclick={() => quickFilters.hasImages = !quickFilters.hasImages}
+        class="px-2 py-1 text-xs rounded-full transition-colors"
+        style={quickFilters.hasImages ? 'background: var(--accent); color: white;' : 'background: var(--bg-hover); color: var(--text-secondary);'}
+      >
+        Has images
+      </button>
+      {#if quickFilters.byAuthor}
+        <button
+          onclick={() => quickFilters.byAuthor = ''}
+          class="px-2 py-1 text-xs rounded-full flex items-center gap-1"
+          style="background: var(--accent); color: white;"
+        >
+          @{quickFilters.byAuthor}
+          <span class="opacity-70">x</span>
+        </button>
+      {/if}
+      <span class="ml-auto text-xs hidden sm:inline" style="color: var(--text-muted);">
+        j/k navigate · space select · s similar · / search
+      </span>
+    </div>
+
     <!-- Stats row -->
     <div class="flex items-center gap-3 mb-4 text-sm" style="color: var(--text-secondary);">
-      <span style="color: var(--text-primary); font-weight: 500;">{$filteredBookmarks.length} bookmarks</span>
+      <span style="color: var(--text-primary); font-weight: 500;">{displayedBookmarks.length} bookmarks</span>
       <span style="color: var(--border-medium);">·</span>
       <button onclick={selectAll} class="hover:underline" style="color: var(--accent);">Select all</button>
       {#if $selectedIds.size > 0}
@@ -559,31 +701,40 @@
     {/if}
 
     <!-- Bookmark List -->
-    <div class="grid grid-cols-1 lg:grid-cols-2 gap-3 pb-24">
-      {#each $filteredBookmarks as bookmark (bookmark.id)}
-        <div
-          class="card cursor-pointer {$selectedIds.has(bookmark.id) ? 'selected' : ''}"
-          onclick={() => toggleSelection(bookmark.id)}
-          style="padding: 12px;"
-        >
-          <div class="flex gap-3">
-            <input
-              type="checkbox"
-              checked={$selectedIds.has(bookmark.id)}
-              onclick={(e) => e.stopPropagation()}
-              onchange={() => toggleSelection(bookmark.id)}
-              style="margin-top: 2px;"
-            />
+    <div class="flex gap-4">
+      <div class="flex-1 grid grid-cols-1 lg:grid-cols-2 gap-3 pb-24">
+        {#each displayedBookmarks as bookmark, index (bookmark.id)}
+          <div
+            class="card cursor-pointer {$selectedIds.has(bookmark.id) ? 'selected' : ''} {focusedIndex === index ? 'focused' : ''}"
+            onclick={() => toggleSelection(bookmark.id)}
+            data-index={index}
+            style="padding: 12px;"
+          >
+            <div class="flex gap-3">
+              <input
+                type="checkbox"
+                checked={$selectedIds.has(bookmark.id)}
+                onclick={(e) => e.stopPropagation()}
+                onchange={() => toggleSelection(bookmark.id)}
+                style="margin-top: 2px;"
+              />
 
-            <div class="flex-1 min-w-0">
-              <!-- Header -->
-              <div class="flex items-center gap-2 mb-1">
-                <span class="font-medium text-sm" style="color: var(--text-primary);">@{bookmark.author_handle}</span>
-                <span class="text-xs" style="color: var(--text-muted);">{formatDate(bookmark.created_at)}</span>
-                {#if bookmark.archivly_folder}
-                  <span class="badge badge-muted ml-auto">{bookmark.archivly_folder}</span>
-                {/if}
-              </div>
+              <div class="flex-1 min-w-0">
+                <!-- Header -->
+                <div class="flex items-center gap-2 mb-1">
+                  <button
+                    onclick={(e) => { e.stopPropagation(); quickFilters.byAuthor = bookmark.author_handle; }}
+                    class="font-medium text-sm hover:underline"
+                    style="color: var(--text-primary);"
+                    title="Filter by this author"
+                  >
+                    @{bookmark.author_handle}
+                  </button>
+                  <span class="text-xs" style="color: var(--text-muted);">{formatDate(bookmark.created_at)}</span>
+                  {#if bookmark.archivly_folder}
+                    <span class="badge badge-muted ml-auto">{bookmark.archivly_folder}</span>
+                  {/if}
+                </div>
 
               <!-- Routed badges -->
               {#if bookmark.routed_to && bookmark.routed_to.length > 0}
@@ -668,6 +819,14 @@
                 >
                   View on X
                 </a>
+                <button
+                  onclick={(e) => { e.stopPropagation(); findSimilar(bookmark.id); }}
+                  class="hover:underline"
+                  style="color: var(--text-secondary);"
+                  title="Find semantically similar bookmarks"
+                >
+                  Find Similar
+                </button>
               </div>
             </div>
           </div>
@@ -681,6 +840,51 @@
           {/if}
         </div>
       {/each}
+      </div>
+
+      <!-- Similar Bookmarks Panel -->
+      {#if showSimilarPanel}
+        <div class="w-80 flex-shrink-0 hidden lg:block">
+          <div class="sticky top-4 bg-white rounded-lg p-4" style="border: 1px solid var(--border-light); box-shadow: var(--shadow-sm);">
+            <div class="flex items-center justify-between mb-3">
+              <h3 class="font-medium text-sm" style="color: var(--text-primary);">Similar Bookmarks</h3>
+              <button
+                onclick={() => showSimilarPanel = false}
+                class="text-lg leading-none"
+                style="color: var(--text-muted);"
+              >
+                &times;
+              </button>
+            </div>
+
+            {#if isLoadingSimilar}
+              <p class="text-sm" style="color: var(--text-muted);">Finding similar...</p>
+            {:else if similarBookmarks.length === 0}
+              <p class="text-sm" style="color: var(--text-muted);">No similar bookmarks found.</p>
+            {:else}
+              <div class="space-y-3 max-h-[70vh] overflow-auto">
+                {#each similarBookmarks as similar}
+                  <div
+                    class="p-2 rounded cursor-pointer hover:bg-gray-50"
+                    style="border: 1px solid var(--border-light);"
+                    onclick={() => { toggleSelection(similar.id); }}
+                  >
+                    <div class="flex items-center gap-2 mb-1">
+                      <span class="text-xs font-medium" style="color: var(--accent);">@{similar.author_handle}</span>
+                      <span class="text-xs px-1.5 py-0.5 rounded" style="background: var(--bg-hover); color: var(--text-muted);">
+                        {Math.round((similar.similarity || 0) * 100)}%
+                      </span>
+                    </div>
+                    <p class="text-xs line-clamp-3" style="color: var(--text-secondary);">
+                      {similar.text?.slice(0, 150)}{similar.text?.length > 150 ? '...' : ''}
+                    </p>
+                  </div>
+                {/each}
+              </div>
+            {/if}
+          </div>
+        </div>
+      {/if}
     </div>
   </main>
 

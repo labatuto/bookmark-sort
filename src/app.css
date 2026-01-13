@@ -173,6 +173,19 @@ input[type="text"]:focus, select:focus, textarea:focus {
   background: var(--bg-selected);
 }
 
+.card.focused {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent-light);
+}
+
+/* Line clamp utility */
+.line-clamp-3 {
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
 /* Dropdown */
 .dropdown {
   background: white;
