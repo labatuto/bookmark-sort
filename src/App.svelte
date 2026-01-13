@@ -54,18 +54,20 @@
   // Load data on mount
   onMount(async () => {
     try {
+      // Load all data in parallel for fast startup
       const [bookmarkData, destData] = await Promise.all([
         api.fetchBookmarks(),
         api.fetchDestinations(),
       ]);
       bookmarks.set(bookmarkData);
       destinations.set(destData);
-      // Pre-load Google accounts (await to ensure ready)
-      await loadGoogleAccounts();
-      // Load X status
-      await loadXStatus();
-      // Load Notion status
-      await loadNotionStatus();
+
+      // Load status checks in parallel (non-blocking)
+      Promise.all([
+        loadGoogleAccounts(),
+        loadXStatus(),
+        loadNotionStatus(),
+      ]).catch(err => console.error('Failed to load status:', err));
     } catch (err) {
       console.error('Failed to load data:', err);
     }
