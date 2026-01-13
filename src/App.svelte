@@ -663,11 +663,33 @@
                 {/if}
                 <p class="tweet-text">{currentBookmark.text}</p>
 
-                {#if currentBookmark.media_urls?.length > 0 && currentBookmark.media_urls[0].startsWith('http')}
-                  <img src={currentBookmark.media_urls[0]} alt="" class="tweet-image" />
+                <!-- Media Images -->
+                {#if currentBookmark.media_urls?.length > 0}
+                  <div class="tweet-media {currentBookmark.media_urls.length > 1 ? 'media-grid' : ''}">
+                    {#each currentBookmark.media_urls.filter(url => url.startsWith('http')).slice(0, 4) as mediaUrl, i}
+                      <img src={mediaUrl} alt="" class="tweet-image" loading="lazy" />
+                    {/each}
+                  </div>
                 {/if}
 
-                {#if currentBookmark.urls?.length > 0}
+                <!-- Quoted Tweet (OP) -->
+                {#if currentBookmark.quoted_tweet}
+                  <div class="quoted-tweet">
+                    <div class="quoted-header">
+                      <span class="quoted-label">Quoting</span>
+                      <span class="quoted-author">@{currentBookmark.quoted_tweet.author_handle}</span>
+                    </div>
+                    <p class="quoted-text">{currentBookmark.quoted_tweet.text}</p>
+                  </div>
+                {:else if currentBookmark.quoted_post_url}
+                  <a href={currentBookmark.quoted_post_url} target="_blank" class="quoted-tweet-link">
+                    <span class="quoted-label">Quoted tweet</span>
+                    <span class="quoted-url">{currentBookmark.quoted_post_url.replace(/^https?:\/\/(www\.)?(twitter|x)\.com\//, '')}</span>
+                  </a>
+                {/if}
+
+                <!-- Link Preview -->
+                {#if currentBookmark.urls?.length > 0 && !currentBookmark.quoted_post_url}
                   <a href={currentBookmark.urls[0]} target="_blank" class="tweet-link">
                     {#if currentBookmark.link_title}
                       <span class="link-title">{currentBookmark.link_title}</span>
@@ -868,11 +890,33 @@
 
                 <p class="bookmark-text">{bookmark.text}</p>
 
-                {#if bookmark.media_urls?.length > 0 && bookmark.media_urls[0].startsWith('http')}
-                  <img src={bookmark.media_urls[0]} alt="" class="bookmark-image" />
+                <!-- Media Images -->
+                {#if bookmark.media_urls?.length > 0}
+                  <div class="tweet-media {bookmark.media_urls.length > 1 ? 'media-grid' : ''}">
+                    {#each bookmark.media_urls.filter(url => url.startsWith('http')).slice(0, 4) as mediaUrl}
+                      <img src={mediaUrl} alt="" class="bookmark-image" loading="lazy" />
+                    {/each}
+                  </div>
                 {/if}
 
-                {#if bookmark.urls?.length > 0}
+                <!-- Quoted Tweet (OP) -->
+                {#if bookmark.quoted_tweet}
+                  <div class="quoted-tweet">
+                    <div class="quoted-header">
+                      <span class="quoted-label">Quoting</span>
+                      <span class="quoted-author">@{bookmark.quoted_tweet.author_handle}</span>
+                    </div>
+                    <p class="quoted-text">{bookmark.quoted_tweet.text}</p>
+                  </div>
+                {:else if bookmark.quoted_post_url}
+                  <a href={bookmark.quoted_post_url} target="_blank" class="quoted-tweet-link" onclick={(e) => e.stopPropagation()}>
+                    <span class="quoted-label">Quoted tweet</span>
+                    <span class="quoted-url">{bookmark.quoted_post_url.replace(/^https?:\/\/(www\.)?(twitter|x)\.com\//, '')}</span>
+                  </a>
+                {/if}
+
+                <!-- Link Preview -->
+                {#if bookmark.urls?.length > 0 && !bookmark.quoted_post_url}
                   <a href={bookmark.urls[0]} target="_blank" class="bookmark-link" onclick={(e) => e.stopPropagation()}>
                     {#if bookmark.link_title}
                       <span class="link-title">{bookmark.link_title}</span>
@@ -1473,14 +1517,91 @@
     margin-bottom: 12px;
   }
 
-  .tweet-image {
-    width: 100%;
-    max-height: 200px;
-    object-fit: cover;
-    border-radius: 12px;
+  /* Media Grid */
+  .tweet-media {
     margin-bottom: 12px;
+    border-radius: 12px;
+    overflow: hidden;
   }
 
+  .tweet-media.media-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 2px;
+  }
+
+  .tweet-image {
+    width: 100%;
+    max-height: 250px;
+    object-fit: cover;
+    display: block;
+  }
+
+  .tweet-media.media-grid .tweet-image {
+    max-height: 150px;
+    aspect-ratio: 16/9;
+  }
+
+  /* Quoted Tweet Styles */
+  .quoted-tweet {
+    margin-bottom: 12px;
+    padding: 12px;
+    border-radius: 12px;
+    border: 1px solid var(--border-light);
+    background: var(--bg-hover);
+  }
+
+  .quoted-header {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-bottom: 6px;
+  }
+
+  .quoted-label {
+    font-size: 12px;
+    color: var(--text-muted);
+  }
+
+  .quoted-author {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--accent);
+  }
+
+  .quoted-text {
+    font-size: 14px;
+    color: var(--text-secondary);
+    line-height: 1.4;
+    margin: 0;
+    display: -webkit-box;
+    -webkit-line-clamp: 4;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
+  .quoted-tweet-link {
+    display: block;
+    margin-bottom: 12px;
+    padding: 12px;
+    border-radius: 12px;
+    border: 1px solid var(--border-light);
+    background: var(--bg-hover);
+    text-decoration: none;
+  }
+
+  .quoted-tweet-link .quoted-label {
+    display: block;
+    margin-bottom: 4px;
+  }
+
+  .quoted-tweet-link .quoted-url {
+    font-size: 13px;
+    color: var(--accent);
+    word-break: break-all;
+  }
+
+  /* Link Preview */
   .tweet-link {
     display: block;
     padding: 12px;
@@ -1868,10 +1989,21 @@
 
   .bookmark-image {
     width: 100%;
-    max-height: 150px;
+    max-height: 180px;
     object-fit: cover;
     border-radius: 10px;
+    display: block;
+  }
+
+  /* Media grid for list view - reuse swipe view styling */
+  .bookmark-content .tweet-media {
     margin-bottom: 10px;
+    border-radius: 10px;
+  }
+
+  .bookmark-content .tweet-media.media-grid .bookmark-image {
+    max-height: 120px;
+    aspect-ratio: 16/9;
   }
 
   .bookmark-link {
