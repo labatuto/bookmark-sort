@@ -748,6 +748,21 @@
               <!-- Text -->
               <p class="text-sm leading-relaxed whitespace-pre-wrap" style="color: var(--text-primary);">{bookmark.text}</p>
 
+              <!-- Images (show all) -->
+              {#if bookmark.media_urls && bookmark.media_urls.length > 0}
+                <div class="mt-3 {bookmark.media_urls.length > 1 ? 'grid grid-cols-2 gap-1' : ''}">
+                  {#each bookmark.media_urls.filter(u => u.startsWith('http')).slice(0, 4) as mediaUrl, i}
+                    <img
+                      src={mediaUrl}
+                      alt=""
+                      class="rounded w-full object-cover cursor-pointer"
+                      style="max-height: {bookmark.media_urls.length > 1 ? '100px' : '200px'};"
+                      onclick={(e) => { e.stopPropagation(); window.open(mediaUrl, '_blank'); }}
+                    />
+                  {/each}
+                </div>
+              {/if}
+
               <!-- Quoted Tweet -->
               {#if bookmark.quoted_post_url}
                 {@const quotedMatch = bookmark.quoted_post_url.match(/(?:twitter\.com|x\.com)\/(\w+)\/status\/(\d+)/)}
@@ -761,31 +776,33 @@
                 >
                   <div class="flex items-center gap-2 mb-1">
                     <svg class="w-3 h-3" style="color: var(--text-muted);" fill="currentColor" viewBox="0 0 24 24">
-                      <path d="M4 4.5A2.5 2.5 0 0 1 6.5 2H18a2.5 2.5 0 0 1 2.5 2.5v14.25a.75.75 0 0 1-.75.75H5.5a1 1 0 0 0 1 1h14.25a.75.75 0 0 1 0 1.5H6.5A2.5 2.5 0 0 1 4 19.5V4.5Zm4.75 4a.75.75 0 0 0 0 1.5h6.5a.75.75 0 0 0 0-1.5h-6.5Zm-.75 4.75a.75.75 0 0 0 .75.75h6.5a.75.75 0 0 0 0-1.5h-6.5a.75.75 0 0 0-.75.75Z"/>
+                      <path d="M18.244 2.25h3.308l-7.227 8.26 8.502 11.24H16.17l-5.214-6.817L4.99 21.75H1.68l7.73-8.835L1.254 2.25H8.08l4.713 6.231zm-1.161 17.52h1.833L7.084 4.126H5.117z"/>
                     </svg>
                     <span class="text-xs font-medium" style="color: var(--accent);">
                       @{bookmark.quoted_tweet?.author_handle || quotedMatch?.[1] || 'unknown'}
                     </span>
                   </div>
                   {#if bookmark.quoted_tweet}
-                    <p class="text-xs leading-relaxed mt-1" style="color: var(--text-secondary);">
-                      {bookmark.quoted_tweet.text.length > 200 ? bookmark.quoted_tweet.text.slice(0, 200) + '...' : bookmark.quoted_tweet.text}
+                    <p class="text-xs leading-relaxed" style="color: var(--text-secondary);">
+                      {bookmark.quoted_tweet.text.length > 280 ? bookmark.quoted_tweet.text.slice(0, 280) + '...' : bookmark.quoted_tweet.text}
                     </p>
+                    <!-- Quoted tweet images -->
+                    {#if bookmark.quoted_tweet.media_urls && bookmark.quoted_tweet.media_urls.length > 0}
+                      <div class="mt-2 {bookmark.quoted_tweet.media_urls.length > 1 ? 'grid grid-cols-2 gap-1' : ''}">
+                        {#each bookmark.quoted_tweet.media_urls.filter(u => u.startsWith('http')).slice(0, 2) as qtMediaUrl}
+                          <img
+                            src={qtMediaUrl}
+                            alt=""
+                            class="rounded w-full object-cover"
+                            style="max-height: 80px;"
+                          />
+                        {/each}
+                      </div>
+                    {/if}
                   {:else}
                     <span class="text-xs" style="color: var(--text-muted);">View quoted post →</span>
                   {/if}
                 </a>
-              {/if}
-
-              <!-- Image -->
-              {#if bookmark.media_urls && bookmark.media_urls.length > 0 && bookmark.media_urls[0].startsWith('http')}
-                <img
-                  src={bookmark.media_urls[0]}
-                  alt=""
-                  class="mt-3 rounded w-full object-cover cursor-pointer"
-                  style="max-height: 140px;"
-                  onclick={(e) => { e.stopPropagation(); window.open(bookmark.media_urls[0], '_blank'); }}
-                />
               {/if}
 
               <!-- Link with title -->

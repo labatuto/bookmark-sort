@@ -273,6 +273,7 @@ export function getAllBookmarks() {
           quoted_tweet = {
             text: quotedBookmark.text,
             author_handle: quotedBookmark.author_handle,
+            media_urls: quotedBookmark.media_urls || [],
           };
         }
       }
