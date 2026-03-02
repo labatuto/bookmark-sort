@@ -1,0 +1,11 @@
+{
+  "$schema": "https://schema.railpack.com",
+  "steps": {
+    "install-build-tools": {
+      "commands": [
+        "apt-get update",
+        "apt-get install -y python3 build-essential"
+      ]
+    }
+  }
+}
