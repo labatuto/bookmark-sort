@@ -1,14 +1,20 @@
 import Database from 'better-sqlite3';
+import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DB_PATH = path.join(__dirname, '../../data/bookmarks.db');
+const DB_PATH = process.env.DATABASE_URL || path.join(__dirname, '../../data/bookmarks.db');
 
 let db: Database.Database;
 
 export function getDb(): Database.Database {
   if (!db) {
+    // Ensure the data directory exists
+    const dir = path.dirname(DB_PATH);
+    if (!fs.existsSync(dir)) {
+      fs.mkdirSync(dir, { recursive: true });
+    }
     db = new Database(DB_PATH);
     db.pragma('journal_mode = WAL');
     initSchema();

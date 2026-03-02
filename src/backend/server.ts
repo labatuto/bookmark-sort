@@ -1255,7 +1255,7 @@ const distPath = path.join(__dirname, '../../dist');
 app.use(express.static(distPath));
 
 // SPA fallback - serve index.html for all non-API routes
-app.get('*', (req, res) => {
+app.get('{*path}', (req, res) => {
   if (!req.path.startsWith('/api/')) {
     res.sendFile(path.join(distPath, 'index.html'));
   }
@@ -1263,8 +1263,8 @@ app.get('*', (req, res) => {
 
 // ============== START SERVER ==============
 
-app.listen(PORT, () => {
-  console.log(`Bookmark Sort API running on http://localhost:${PORT}`);
+app.listen(Number(PORT), '0.0.0.0', () => {
+  console.log(`Bookmark Sort API running on http://0.0.0.0:${PORT}`);
 });
 
 // Graceful shutdown
