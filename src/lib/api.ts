@@ -1,4 +1,6 @@
-const API_BASE = 'http://localhost:3001/api';
+// In production the frontend is served by the same Express server,
+// so use relative URLs. In dev (Vite on :5173), proxy or use absolute.
+const API_BASE = import.meta.env.DEV ? 'http://localhost:3001/api' : '/api';
 
 // Bookmarks
 export async function fetchBookmarks() {

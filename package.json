@@ -3,6 +3,9 @@
   "private": true,
   "version": "0.1.0",
   "type": "module",
+  "engines": {
+    "node": ">=20.0.0"
+  },
   "scripts": {
     "dev": "vite",
     "dev:server": "node --import tsx src/backend/server.ts",
@@ -40,7 +43,9 @@
     "express": "^5.2.1",
     "open": "^11.0.0",
     "openai": "^6.15.0",
-    "puppeteer": "^24.34.0",
     "uuid": "^13.0.0"
+  },
+  "optionalDependencies": {
+    "puppeteer": "^24.34.0"
   }
 }

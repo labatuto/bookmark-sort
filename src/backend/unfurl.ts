@@ -2,14 +2,26 @@
  * URL unfurling utility - follows redirects and extracts page titles
  */
 
-import puppeteer, { Browser } from 'puppeteer';
+// Puppeteer is optional - only needed for link title backfill
+let puppeteerModule: any = null;
+let browserInstance: any = null;
 
-// Shared browser instance for efficiency
-let browserInstance: Browser | null = null;
+async function getPuppeteer() {
+  if (!puppeteerModule) {
+    try {
+      puppeteerModule = (await import('puppeteer')).default;
+    } catch {
+      return null;
+    }
+  }
+  return puppeteerModule;
+}
 
-async function getBrowser(): Promise<Browser> {
+async function getBrowser() {
+  const ppt = await getPuppeteer();
+  if (!ppt) return null;
   if (!browserInstance || !browserInstance.connected) {
-    browserInstance = await puppeteer.launch({
+    browserInstance = await ppt.launch({
       headless: true,
       args: ['--no-sandbox', '--disable-setuid-sandbox'],
     });
@@ -80,8 +92,15 @@ export async function unfurlUrl(url: string): Promise<UnfurlResult> {
 
 /**
  * Unfurl a URL using Puppeteer (bypasses Cloudflare and bot detection)
+ * Falls back to fetch-based unfurling if Puppeteer is not installed
  */
 export async function unfurlUrlWithPuppeteer(url: string): Promise<UnfurlResult> {
+  const browser = await getBrowser();
+  if (!browser) {
+    // Puppeteer not available, fall back to fetch-based unfurling
+    return unfurlUrl(url);
+  }
+
   const result: UnfurlResult = {
     originalUrl: url,
     finalUrl: url,
@@ -89,7 +108,6 @@ export async function unfurlUrlWithPuppeteer(url: string): Promise<UnfurlResult>
 
   let page = null;
   try {
-    const browser = await getBrowser();
     page = await browser.newPage();
 
     // Set a realistic user agent
