@@ -1,0 +1,14 @@
+# Fallback config if Railway uses Nixpacks instead of Dockerfile
+# Ensures Node 20 and native build tools for better-sqlite3
+
+[phases.setup]
+nixPkgs = ["nodejs_20", "python3", "gcc", "gnumake"]
+
+[phases.install]
+cmds = ["PUPPETEER_SKIP_DOWNLOAD=true npm ci"]
+
+[phases.build]
+cmds = ["npm run build"]
+
+[start]
+cmd = "node --import tsx src/backend/server.ts"
