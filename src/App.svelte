@@ -7,18 +7,6 @@
 
   // View mode: 'swipe' for Tinder-style, 'list' for power user view
   let viewMode: 'swipe' | 'list' = 'list';
-  let currentSwipeIndex = 0;
-  let swipeDirection: 'left' | 'right' | null = null;
-  let swipeOffset = 0;
-  let isDragging = false;
-  let startX = 0;
-  let showRouteOptions = false;
-
-  // Swipe route mode states
-  let swipeNewFolderMode = false;
-  let swipeNewFolderName = '';
-  let showNewDocModalForSwipe = false;
-  let swipeNewDocTitle = '';
 
   // Keyboard navigation
   let focusedIndex = -1;
@@ -46,7 +34,6 @@
   });
 
   let showImportModal = false;
-  let swipeMode = false;
   let showSettingsModal = false;
   let importContent = '';
   let importStatus = '';
@@ -102,7 +89,7 @@
   // Load data on mount
   onMount(async () => {
     if (window.innerWidth <= 768) {
-      swipeMode = true;
+      viewMode = 'swipe';
     }
     try {
       // Load all data in parallel for fast startup
@@ -493,127 +480,6 @@
     return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
   }
 
-  // Swipe handlers
-  function handleTouchStart(e: TouchEvent) {
-    if (viewMode !== 'swipe') return;
-    isDragging = true;
-    startX = e.touches[0].clientX;
-    swipeOffset = 0;
-  }
-
-  function handleTouchMove(e: TouchEvent) {
-    if (!isDragging || viewMode !== 'swipe') return;
-    const currentX = e.touches[0].clientX;
-    swipeOffset = currentX - startX;
-
-    if (swipeOffset > 50) {
-      swipeDirection = 'right';
-    } else if (swipeOffset < -50) {
-      swipeDirection = 'left';
-    } else {
-      swipeDirection = null;
-    }
-  }
-
-  function handleTouchEnd() {
-    if (!isDragging || viewMode !== 'swipe') return;
-    isDragging = false;
-
-    const threshold = 100;
-    const currentBookmark = $filteredBookmarks[currentSwipeIndex];
-
-    if (swipeOffset > threshold && currentBookmark) {
-      // Swipe right - Keep (show routing options)
-      showRouteOptions = true;
-    } else if (swipeOffset < -threshold && currentBookmark) {
-      // Swipe left - Discard
-      handleDiscard(currentBookmark);
-    }
-
-    swipeOffset = 0;
-    swipeDirection = null;
-  }
-
-  async function handleDiscard(bookmark: Bookmark) {
-    try {
-      await api.deleteBookmarks([bookmark.id], false);
-      const data = await api.fetchBookmarks();
-      bookmarks.set(data);
-      showStatus('Discarded');
-      // Move to next card
-      if (currentSwipeIndex >= $filteredBookmarks.length) {
-        currentSwipeIndex = Math.max(0, $filteredBookmarks.length - 1);
-      }
-    } catch (err) {
-      console.error('Discard failed:', err);
-    }
-  }
-
-  async function handleKeepAndRoute(bookmark: Bookmark, destinationType: string, destinationId?: string) {
-    showRouteOptions = false;
-    try {
-      if (destinationType === 'folder') {
-        await api.moveToFolder([bookmark.id], destinationId || 'saved');
-      } else if (destinationId) {
-        await api.routeBookmarksBulk([bookmark.id], destinationId);
-      }
-      const data = await api.fetchBookmarks();
-      bookmarks.set(data);
-      showStatus('Saved!');
-      // Move to next card
-      currentSwipeIndex = Math.min(currentSwipeIndex + 1, $filteredBookmarks.length - 1);
-    } catch (err) {
-      console.error('Route failed:', err);
-    }
-  }
-
-  function skipCard() {
-    currentSwipeIndex = Math.min(currentSwipeIndex + 1, $filteredBookmarks.length - 1);
-    showRouteOptions = false;
-  }
-
-  function previousCard() {
-    currentSwipeIndex = Math.max(currentSwipeIndex - 1, 0);
-    showRouteOptions = false;
-  }
-
-  // Send single bookmark to a Google Doc (for swipe mode)
-  async function sendSwipeToDoc(bookmark: Bookmark, doc: { id: string; name: string }) {
-    try {
-      await api.sendToGoogleDoc([bookmark.id], doc.id, doc.name, activeGoogleAccount);
-      const data = await api.fetchBookmarks();
-      bookmarks.set(data);
-      showStatus(`Sent to ${doc.name}`);
-      docSearchQuery = '';
-      docSearchResults = [];
-      currentSwipeIndex = Math.min(currentSwipeIndex + 1, $filteredBookmarks.length - 1);
-    } catch (err) {
-      console.error('Send to doc failed:', err);
-      alert('Failed to send to doc');
-    }
-  }
-
-  // Create new Google Doc with single bookmark (for swipe mode)
-  async function createSwipeDoc(bookmark: Bookmark) {
-    if (!swipeNewDocTitle.trim()) return;
-    try {
-      const result = await api.createDocWithTweets([bookmark.id], swipeNewDocTitle, activeGoogleAccount);
-      if (result.docUrl) {
-        window.open(result.docUrl, '_blank');
-      }
-      const data = await api.fetchBookmarks();
-      bookmarks.set(data);
-      showNewDocModalForSwipe = false;
-      showRouteOptions = false;
-      swipeNewDocTitle = '';
-      showStatus('Created new doc');
-      currentSwipeIndex = Math.min(currentSwipeIndex + 1, $filteredBookmarks.length - 1);
-    } catch (err) {
-      console.error('Create doc failed:', err);
-      alert('Failed to create doc');
-    }
-  }
-
   // Get current filter label
   $: currentFilterLabel = $filters.folder || ($filters.status !== 'all' ? ($filters.status === 'pending' ? 'Not routed' : 'Routed') : 'All bookmarks');
 </script>
@@ -651,7 +517,7 @@
   <div class="view-toggle-bar">
     <button
       class="view-toggle-btn {viewMode === 'swipe' ? 'active' : ''}"
-      onclick={() => { viewMode = 'swipe'; currentSwipeIndex = 0; }}
+      onclick={() => { viewMode = 'swipe'; }}
     >
       <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z"/>
@@ -739,208 +605,15 @@
     {#if $filters.folder}
       <span class="context-folder">in {$filters.folder}</span>
     {/if}
-    {#if viewMode === 'swipe' && $filteredBookmarks.length > 0}
-      <span class="context-progress">{currentSwipeIndex + 1} of {$filteredBookmarks.length}</span>
-    {/if}
   </div>
 
   <!-- Main Content -->
   <main class="main-content">
     {#if viewMode === 'swipe'}
-      <!-- Swipe View -->
-      <div class="swipe-container">
-        {#if $filteredBookmarks.length === 0}
-          <div class="empty-state">
-            <p>No bookmarks to sort</p>
-          </div>
-        {:else}
-          {@const currentBookmark = $filteredBookmarks[currentSwipeIndex]}
-          {#if currentBookmark}
-            <div
-              class="swipe-card {swipeDirection}"
-              style="transform: translateX({swipeOffset}px) rotate({swipeOffset * 0.02}deg);"
-              ontouchstart={handleTouchStart}
-              ontouchmove={handleTouchMove}
-              ontouchend={handleTouchEnd}
-            >
-              <!-- Swipe Indicators -->
-              <div class="swipe-indicator left {swipeDirection === 'left' ? 'active' : ''}">
-                <span>DISCARD</span>
-              </div>
-              <div class="swipe-indicator right {swipeDirection === 'right' ? 'active' : ''}">
-                <span>KEEP</span>
-              </div>
-
-              <!-- Card Content -->
-              <div class="swipe-card-content">
-                <div class="swipe-card-header">
-                  <span class="author">@{currentBookmark.author_handle}</span>
-                  <span class="date">{formatDate(currentBookmark.created_at)}</span>
-                </div>
-                {#if currentBookmark.archivly_folder}
-                  <span class="folder-badge">{currentBookmark.archivly_folder}</span>
-                {/if}
-                <p class="tweet-text">{currentBookmark.text}</p>
-
-                <!-- Media Images -->
-                {#if currentBookmark.media_urls?.length > 0}
-                  <div class="tweet-media {currentBookmark.media_urls.length > 1 ? 'media-grid' : ''}">
-                    {#each currentBookmark.media_urls.filter(url => url.startsWith('http')).slice(0, 4) as mediaUrl, i}
-                      <img src={mediaUrl} alt="" class="tweet-image" loading="lazy" />
-                    {/each}
-                  </div>
-                {/if}
-
-                <!-- Quoted Tweet (OP) -->
-                {#if currentBookmark.quoted_tweet}
-                  <div class="quoted-tweet">
-                    <div class="quoted-header">
-                      <span class="quoted-label">Quoting</span>
-                      <span class="quoted-author">@{currentBookmark.quoted_tweet.author_handle}</span>
-                    </div>
-                    <p class="quoted-text">{currentBookmark.quoted_tweet.text}</p>
-                  </div>
-                {:else if currentBookmark.quoted_post_url}
-                  <a href={currentBookmark.quoted_post_url} target="_blank" class="quoted-tweet-link">
-                    <span class="quoted-label">Quoted tweet</span>
-                    <span class="quoted-url">{currentBookmark.quoted_post_url.replace(/^https?:\/\/(www\.)?(twitter|x)\.com\//, '')}</span>
-                  </a>
-                {/if}
-
-                <!-- Link Preview -->
-                {#if currentBookmark.urls?.length > 0 && !currentBookmark.quoted_post_url}
-                  <a href={currentBookmark.urls[0]} target="_blank" class="tweet-link">
-                    {#if currentBookmark.link_title}
-                      <span class="link-title">{currentBookmark.link_title}</span>
-                    {/if}
-                    <span class="link-url">{currentBookmark.urls[0].replace(/^https?:\/\/(www\.)?/, '').slice(0, 50)}</span>
-                  </a>
-                {/if}
-
-                <a href="https://x.com/{currentBookmark.author_handle}/status/{currentBookmark.tweet_id}" target="_blank" class="view-on-x">
-                  View on X →
-                </a>
-              </div>
-            </div>
-
-            <!-- Route Options Overlay -->
-            {#if showRouteOptions}
-              <div class="route-overlay" onclick={() => showRouteOptions = false}>
-                <div class="route-panel" onclick={(e) => e.stopPropagation()}>
-                  <h3>Route to:</h3>
-
-                  <!-- Google Docs Search -->
-                  {#if googleAccounts.length > 0}
-                    <div class="route-section">
-                      <input
-                        type="text"
-                        placeholder="Search Google Docs..."
-                        class="route-search-input"
-                        bind:value={docSearchQuery}
-                        oninput={handleDocSearch}
-                      />
-                      {#if isSearchingDocs}
-                        <div class="route-searching">Searching...</div>
-                      {/if}
-                      {#if docSearchResults.length > 0}
-                        <div class="route-doc-results">
-                          {#each docSearchResults as doc}
-                            <button class="route-btn doc" onclick={() => { sendSwipeToDoc(currentBookmark, doc); showRouteOptions = false; }}>
-                              📄 {doc.name}
-                            </button>
-                          {/each}
-                        </div>
-                      {/if}
-                      <button class="route-btn new-doc" onclick={() => { showNewDocModalForSwipe = true; }}>
-                        + New Google Doc
-                      </button>
-                    </div>
-                  {/if}
-
-                  <!-- Instapaper -->
-                  <button class="route-btn instapaper" onclick={() => handleKeepAndRoute(currentBookmark, 'instapaper', 'default')}>
-                    📖 Send to Instapaper
-                  </button>
-
-                  <!-- Folders -->
-                  <div class="route-section-title">Move to folder:</div>
-                  <div class="route-options">
-                    {#each $folders as folder}
-                      <button class="route-btn folder" onclick={() => handleKeepAndRoute(currentBookmark, 'folder', folder)}>
-                        📁 {folder}
-                      </button>
-                    {/each}
-                    <button class="route-btn new-folder" onclick={() => { swipeNewFolderMode = true; }}>
-                      + New folder
-                    </button>
-                  </div>
-
-                  <button class="route-cancel" onclick={() => showRouteOptions = false}>Cancel</button>
-                </div>
-              </div>
-            {/if}
-
-            <!-- New Folder Input for Swipe -->
-            {#if swipeNewFolderMode}
-              <div class="route-overlay" onclick={() => swipeNewFolderMode = false}>
-                <div class="route-panel small" onclick={(e) => e.stopPropagation()}>
-                  <h3>New Folder</h3>
-                  <input
-                    type="text"
-                    placeholder="Folder name..."
-                    class="route-search-input"
-                    bind:value={swipeNewFolderName}
-                    onkeydown={(e) => { if (e.key === 'Enter' && swipeNewFolderName.trim()) { handleKeepAndRoute(currentBookmark, 'folder', swipeNewFolderName.trim()); swipeNewFolderMode = false; swipeNewFolderName = ''; showRouteOptions = false; }}}
-                  />
-                  <div class="route-panel-actions">
-                    <button class="route-cancel" onclick={() => swipeNewFolderMode = false}>Cancel</button>
-                    <button class="route-confirm" onclick={() => { if (swipeNewFolderName.trim()) { handleKeepAndRoute(currentBookmark, 'folder', swipeNewFolderName.trim()); swipeNewFolderMode = false; swipeNewFolderName = ''; showRouteOptions = false; }}}>Create</button>
-                  </div>
-                </div>
-              </div>
-            {/if}
-
-            <!-- New Doc Modal for Swipe -->
-            {#if showNewDocModalForSwipe}
-              <div class="route-overlay" onclick={() => showNewDocModalForSwipe = false}>
-                <div class="route-panel small" onclick={(e) => e.stopPropagation()}>
-                  <h3>New Google Doc</h3>
-                  <input
-                    type="text"
-                    placeholder="Document title..."
-                    class="route-search-input"
-                    bind:value={swipeNewDocTitle}
-                    onkeydown={(e) => { if (e.key === 'Enter' && swipeNewDocTitle.trim()) createSwipeDoc(currentBookmark); }}
-                  />
-                  <div class="route-panel-actions">
-                    <button class="route-cancel" onclick={() => showNewDocModalForSwipe = false}>Cancel</button>
-                    <button class="route-confirm" onclick={() => createSwipeDoc(currentBookmark)}>Create</button>
-                  </div>
-                </div>
-              </div>
-            {/if}
-
-            <!-- Swipe Controls -->
-            <div class="swipe-controls">
-              <button class="swipe-btn discard" onclick={() => handleDiscard(currentBookmark)} aria-label="Discard bookmark">
-                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
-                </svg>
-              </button>
-              <button class="swipe-btn skip" onclick={skipCard} aria-label="Skip to next">
-                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 5l7 7-7 7M5 5l7 7-7 7"/>
-                </svg>
-              </button>
-              <button class="swipe-btn keep" onclick={() => showRouteOptions = true} aria-label="Keep and route">
-                <svg fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
-                </svg>
-              </button>
-            </div>
-          {/if}
-        {/if}
-      </div>
+      <SwipeMode
+        onToggleMode={() => { viewMode = 'list'; }}
+        onShowImport={() => { showImportModal = true; }}
+      />
 
     {:else}
       <!-- List View -->
@@ -1523,120 +1196,12 @@
     color: var(--accent);
   }
 
-  .context-progress {
-    margin-left: auto;
-    font-weight: 500;
-  }
-
   /* ===== Main Content ===== */
   .main-content {
     padding-bottom: 100px;
   }
 
-  /* ===== Swipe View ===== */
-  .swipe-container {
-    padding: 16px;
-    min-height: calc(100vh - 280px);
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-  }
-
-  .swipe-card {
-    position: relative;
-    width: 100%;
-    max-width: 400px;
-    background: var(--bg-card);
-    border-radius: 16px;
-    box-shadow: var(--shadow-lg);
-    overflow: hidden;
-    touch-action: pan-y;
-    user-select: none;
-    transition: box-shadow 0.2s;
-  }
-
-  .swipe-card.left {
-    box-shadow: -8px 0 30px rgba(239, 68, 68, 0.3);
-  }
-
-  .swipe-card.right {
-    box-shadow: 8px 0 30px rgba(16, 185, 129, 0.3);
-  }
-
-  .swipe-indicator {
-    position: absolute;
-    top: 20px;
-    padding: 8px 16px;
-    border-radius: 8px;
-    font-size: 14px;
-    font-weight: 700;
-    letter-spacing: 1px;
-    opacity: 0;
-    transform: scale(0.8);
-    transition: all 0.2s;
-    z-index: 10;
-  }
-
-  .swipe-indicator.left {
-    right: 20px;
-    background: var(--danger-light);
-    color: var(--danger);
-    border: 2px solid var(--danger);
-  }
-
-  .swipe-indicator.right {
-    left: 20px;
-    background: var(--success-light);
-    color: var(--success);
-    border: 2px solid var(--success);
-  }
-
-  .swipe-indicator.active {
-    opacity: 1;
-    transform: scale(1);
-  }
-
-  .swipe-card-content {
-    padding: 20px;
-  }
-
-  .swipe-card-header {
-    display: flex;
-    align-items: center;
-    gap: 8px;
-    margin-bottom: 8px;
-  }
-
-  .swipe-card-header .author {
-    font-weight: 600;
-    color: var(--text-primary);
-  }
-
-  .swipe-card-header .date {
-    font-size: 12px;
-    color: var(--text-muted);
-  }
-
-  .folder-badge {
-    display: inline-block;
-    padding: 4px 10px;
-    border-radius: 12px;
-    font-size: 11px;
-    font-weight: 500;
-    background: var(--bg-hover);
-    color: var(--text-secondary);
-    margin-bottom: 12px;
-  }
-
-  .tweet-text {
-    font-size: 15px;
-    line-height: 1.5;
-    color: var(--text-primary);
-    white-space: pre-wrap;
-    margin-bottom: 12px;
-  }
-
-  /* Media Grid */
+  /* ===== Shared Tweet Styles ===== */
   .tweet-media {
     margin-bottom: 12px;
     border-radius: 12px;
@@ -1649,19 +1214,6 @@
     gap: 2px;
   }
 
-  .tweet-image {
-    width: 100%;
-    max-height: 250px;
-    object-fit: cover;
-    display: block;
-  }
-
-  .tweet-media.media-grid .tweet-image {
-    max-height: 150px;
-    aspect-ratio: 16/9;
-  }
-
-  /* Quoted Tweet Styles */
   .quoted-tweet {
     margin-bottom: 12px;
     padding: 12px;
@@ -1718,246 +1270,6 @@
     font-size: 13px;
     color: var(--accent);
     word-break: break-all;
-  }
-
-  /* Link Preview */
-  .tweet-link {
-    display: block;
-    padding: 12px;
-    border-radius: 10px;
-    background: var(--bg-hover);
-    border: 1px solid var(--border-light);
-    text-decoration: none;
-    margin-bottom: 12px;
-  }
-
-  .tweet-link .link-title {
-    display: block;
-    font-size: 14px;
-    font-weight: 500;
-    color: var(--text-primary);
-    margin-bottom: 4px;
-  }
-
-  .tweet-link .link-url {
-    display: block;
-    font-size: 12px;
-    color: var(--accent);
-  }
-
-  .view-on-x {
-    font-size: 13px;
-    color: var(--accent);
-    text-decoration: none;
-  }
-
-  /* ===== Swipe Controls ===== */
-  .swipe-controls {
-    display: flex;
-    justify-content: center;
-    gap: 20px;
-    margin-top: 24px;
-  }
-
-  .swipe-btn {
-    width: 60px;
-    height: 60px;
-    border-radius: 50%;
-    border: none;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    box-shadow: var(--shadow-md);
-    transition: all 0.2s;
-  }
-
-  .swipe-btn svg {
-    width: 28px;
-    height: 28px;
-  }
-
-  .swipe-btn.discard {
-    background: var(--danger-light);
-    color: var(--danger);
-  }
-
-  .swipe-btn.skip {
-    background: var(--bg-card);
-    color: var(--text-muted);
-    width: 50px;
-    height: 50px;
-  }
-
-  .swipe-btn.skip svg {
-    width: 22px;
-    height: 22px;
-  }
-
-  .swipe-btn.keep {
-    background: var(--success-light);
-    color: var(--success);
-  }
-
-  .swipe-btn:active {
-    transform: scale(0.95);
-  }
-
-  /* ===== Route Overlay ===== */
-  .route-overlay {
-    position: fixed;
-    inset: 0;
-    background: rgba(0, 0, 0, 0.5);
-    display: flex;
-    align-items: flex-end;
-    justify-content: center;
-    z-index: 60;
-    padding: 16px;
-    padding-bottom: calc(16px + env(safe-area-inset-bottom));
-  }
-
-  .route-panel {
-    width: 100%;
-    max-width: 400px;
-    max-height: 80vh;
-    background: var(--bg-card);
-    border-radius: 20px;
-    padding: 24px;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-  }
-
-  .route-panel.small {
-    max-height: auto;
-  }
-
-  .route-panel h3 {
-    font-size: 18px;
-    font-weight: 600;
-    color: var(--text-primary);
-    margin-bottom: 16px;
-    flex-shrink: 0;
-  }
-
-  .route-section {
-    margin-bottom: 16px;
-    flex-shrink: 0;
-  }
-
-  .route-section-title {
-    font-size: 13px;
-    font-weight: 600;
-    color: var(--text-muted);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-    margin-bottom: 10px;
-    margin-top: 8px;
-  }
-
-  .route-search-input {
-    width: 100%;
-    padding: 12px 16px;
-    border-radius: 12px;
-    border: 1px solid var(--border-light);
-    background: var(--bg-primary);
-    color: var(--text-primary);
-    font-size: 15px;
-    margin-bottom: 10px;
-  }
-
-  .route-search-input:focus {
-    outline: none;
-    border-color: var(--accent);
-  }
-
-  .route-searching {
-    font-size: 13px;
-    color: var(--text-muted);
-    padding: 8px 0;
-  }
-
-  .route-doc-results {
-    display: flex;
-    flex-direction: column;
-    gap: 8px;
-    max-height: 150px;
-    overflow-y: auto;
-    margin-bottom: 10px;
-  }
-
-  .route-options {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
-    margin-bottom: 16px;
-    max-height: 200px;
-    overflow-y: auto;
-    flex-shrink: 1;
-  }
-
-  .route-btn {
-    padding: 14px 16px;
-    border-radius: 12px;
-    border: 1px solid var(--border-light);
-    background: var(--bg-primary);
-    color: var(--text-primary);
-    font-size: 15px;
-    text-align: left;
-    transition: all 0.2s;
-    flex-shrink: 0;
-  }
-
-  .route-btn:active {
-    background: var(--bg-hover);
-  }
-
-  .route-btn.new-folder,
-  .route-btn.new-doc {
-    color: var(--accent);
-    border-style: dashed;
-  }
-
-  .route-btn.instapaper {
-    background: #fefce8;
-    border-color: #fef08a;
-  }
-
-  .route-btn.doc {
-    background: #eff6ff;
-    border-color: #bfdbfe;
-  }
-
-  .route-panel-actions {
-    display: flex;
-    gap: 10px;
-    margin-top: 16px;
-  }
-
-  .route-panel-actions button {
-    flex: 1;
-  }
-
-  .route-confirm {
-    padding: 14px;
-    border-radius: 12px;
-    border: none;
-    background: var(--accent);
-    color: white;
-    font-size: 15px;
-    font-weight: 500;
-  }
-
-  .route-cancel {
-    width: 100%;
-    padding: 14px;
-    border-radius: 12px;
-    border: none;
-    background: var(--bg-hover);
-    color: var(--text-secondary);
-    font-size: 15px;
-    font-weight: 500;
-    flex-shrink: 0;
-    margin-top: auto;
   }
 
   /* ===== List View ===== */
