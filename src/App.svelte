@@ -51,8 +51,37 @@
   let notionSearchTimeout: number;
   let showNotionDropdown = false;
 
+  // Swipe mode state
+  let swipeMode = false;
+  let swipeIndex = 0;
+  let swipeDeltaX = 0;
+  let swipeStartX = 0;
+  let swipeStartY = 0;
+  let swipeStartTime = 0;
+  let isSwipeGesture = false;
+  let swipeAnimating = false;
+
+  // Swipe mode bottom sheet panels
+  let showSwipeDocPanel = false;
+  let showSwipeNotionPanel = false;
+  let showSwipeFolderPanel = false;
+  let swipeDocQuery = '';
+  let swipeDocResults: { id: string; name: string }[] = [];
+  let isSwipeDocSearching = false;
+  let swipeDocTimeout: number;
+  let swipeNotionQuery = '';
+  let swipeNotionResults: { id: string; title: string; url: string }[] = [];
+  let isSwipeNotionSearching = false;
+  let swipeNotionTimeout: number;
+  let swipeNewFolderInput = false;
+  let swipeNewFolderName = '';
+
   // Load data on mount
   onMount(async () => {
+    // Auto-enable swipe mode on mobile
+    if (window.innerWidth <= 768) {
+      swipeMode = true;
+    }
     try {
       const [bookmarkData, destData] = await Promise.all([
         api.fetchBookmarks(),
@@ -389,6 +418,244 @@
         alert('Failed to delete: ' + err);
       });
   }
+
+  // === Swipe Mode Functions ===
+
+  function toggleSwipeMode() {
+    swipeMode = !swipeMode;
+    if (swipeMode) {
+      swipeIndex = 0;
+      swipeDeltaX = 0;
+      clearSelection();
+      closeAllSwipePanels();
+    }
+  }
+
+  function onSwipeTouchStart(e: TouchEvent) {
+    if (swipeAnimating) return;
+    const touch = e.touches[0];
+    swipeStartX = touch.clientX;
+    swipeStartY = touch.clientY;
+    swipeStartTime = Date.now();
+    swipeDeltaX = 0;
+    isSwipeGesture = false;
+  }
+
+  function onSwipeTouchMove(e: TouchEvent) {
+    if (swipeAnimating) return;
+    const touch = e.touches[0];
+    const deltaX = touch.clientX - swipeStartX;
+    const deltaY = touch.clientY - swipeStartY;
+
+    if (!isSwipeGesture && (Math.abs(deltaX) > 10 || Math.abs(deltaY) > 10)) {
+      isSwipeGesture = Math.abs(deltaX) > Math.abs(deltaY);
+      if (!isSwipeGesture) return;
+    }
+
+    if (isSwipeGesture) {
+      e.preventDefault();
+      swipeDeltaX = deltaX;
+    }
+  }
+
+  function onSwipeTouchEnd() {
+    if (swipeAnimating || !isSwipeGesture) {
+      swipeDeltaX = 0;
+      return;
+    }
+
+    const elapsed = Math.max(Date.now() - swipeStartTime, 1);
+    const velocity = Math.abs(swipeDeltaX) / elapsed;
+    const threshold = 80;
+    const velocityThreshold = 0.5;
+
+    if (swipeDeltaX > threshold || (swipeDeltaX > 30 && velocity > velocityThreshold)) {
+      completeSwipe('right');
+    } else if (swipeDeltaX < -threshold || (swipeDeltaX < -30 && velocity > velocityThreshold)) {
+      completeSwipe('left');
+    } else {
+      swipeDeltaX = 0;
+    }
+  }
+
+  function completeSwipe(direction: 'left' | 'right') {
+    swipeAnimating = true;
+    swipeDeltaX = direction === 'right' ? window.innerWidth + 100 : -(window.innerWidth + 100);
+
+    setTimeout(async () => {
+      if (direction === 'right') {
+        await swipeSendToInstapaper();
+      }
+      finishSwipeAdvance();
+    }, 250);
+  }
+
+  function finishSwipeAdvance() {
+    swipeDeltaX = 0;
+    swipeAnimating = false;
+    const list = $filteredBookmarks;
+    if (swipeIndex >= list.length && list.length > 0) {
+      swipeIndex = list.length - 1;
+    }
+  }
+
+  async function swipeSendToInstapaper() {
+    const bookmark = $filteredBookmarks[swipeIndex];
+    if (!bookmark) return;
+
+    const instapaperDest = $destinations.find(d => d.type === 'instapaper');
+    if (!instapaperDest) {
+      showStatus('No Instapaper destination configured. Add one in Settings.');
+      return;
+    }
+
+    try {
+      await api.routeBookmarksBulk([bookmark.id], instapaperDest.id);
+      showStatus('Sent to Instapaper');
+      const data = await api.fetchBookmarks();
+      bookmarks.set(data);
+    } catch (err) {
+      console.error('Instapaper route failed:', err);
+      showStatus('Failed to send to Instapaper');
+    }
+  }
+
+  function swipeSkip() {
+    if (swipeAnimating) return;
+    completeSwipe('left');
+  }
+
+  async function swipeDelete() {
+    const bookmark = $filteredBookmarks[swipeIndex];
+    if (!bookmark || swipeAnimating) return;
+
+    try {
+      await api.deleteBookmarks([bookmark.id], true);
+      showStatus('Deleted & queued for unbookmark');
+      const data = await api.fetchBookmarks();
+      bookmarks.set(data);
+      finishSwipeAdvance();
+    } catch (err) {
+      console.error('Delete failed:', err);
+      showStatus('Failed to delete');
+    }
+  }
+
+  function handleSwipeDocSearch(e: Event) {
+    const value = (e.target as HTMLInputElement).value;
+    swipeDocQuery = value;
+    clearTimeout(swipeDocTimeout);
+
+    if (!value.trim() || value.length < 2) {
+      swipeDocResults = [];
+      isSwipeDocSearching = false;
+      return;
+    }
+
+    isSwipeDocSearching = true;
+    swipeDocTimeout = setTimeout(async () => {
+      if (!activeGoogleAccount) await loadGoogleAccounts();
+      if (!activeGoogleAccount) { isSwipeDocSearching = false; return; }
+      try {
+        swipeDocResults = await api.searchGoogleDocs(value, activeGoogleAccount);
+      } catch (err) {
+        console.error('Doc search failed:', err);
+        swipeDocResults = [];
+      } finally {
+        isSwipeDocSearching = false;
+      }
+    }, 300);
+  }
+
+  async function swipeSendToDoc(doc: { id: string; name: string }) {
+    const bookmark = $filteredBookmarks[swipeIndex];
+    if (!bookmark) return;
+
+    try {
+      await api.sendToGoogleDoc([bookmark.id], doc.id, doc.name, activeGoogleAccount);
+      showStatus(`Sent to "${doc.name}"`);
+      showSwipeDocPanel = false;
+      swipeDocQuery = '';
+      swipeDocResults = [];
+      const data = await api.fetchBookmarks();
+      bookmarks.set(data);
+      finishSwipeAdvance();
+    } catch (err) {
+      console.error('Send to doc failed:', err);
+      showStatus('Failed to send to doc');
+    }
+  }
+
+  function handleSwipeNotionSearch(e: Event) {
+    const value = (e.target as HTMLInputElement).value;
+    swipeNotionQuery = value;
+    clearTimeout(swipeNotionTimeout);
+
+    if (!value.trim() || value.length < 2) {
+      swipeNotionResults = [];
+      isSwipeNotionSearching = false;
+      return;
+    }
+
+    isSwipeNotionSearching = true;
+    swipeNotionTimeout = setTimeout(async () => {
+      try {
+        swipeNotionResults = await api.searchNotionPages(value);
+      } catch (err) {
+        console.error('Notion search failed:', err);
+        swipeNotionResults = [];
+      } finally {
+        isSwipeNotionSearching = false;
+      }
+    }, 300);
+  }
+
+  async function swipeSendToNotion(page: { id: string; title: string }) {
+    const bookmark = $filteredBookmarks[swipeIndex];
+    if (!bookmark) return;
+
+    try {
+      await api.sendToNotionPage([bookmark.id], page.id, page.title);
+      showStatus(`Sent to "${page.title}"`);
+      showSwipeNotionPanel = false;
+      swipeNotionQuery = '';
+      swipeNotionResults = [];
+      const data = await api.fetchBookmarks();
+      bookmarks.set(data);
+      finishSwipeAdvance();
+    } catch (err) {
+      console.error('Send to Notion failed:', err);
+      showStatus('Failed to send to Notion');
+    }
+  }
+
+  async function swipeMoveToFolder(folder: string | null) {
+    const bookmark = $filteredBookmarks[swipeIndex];
+    if (!bookmark) return;
+
+    try {
+      await api.moveToFolder([bookmark.id], folder);
+      showStatus(folder ? `Moved to "${folder}"` : 'Removed from folder');
+      showSwipeFolderPanel = false;
+      const data = await api.fetchBookmarks();
+      bookmarks.set(data);
+    } catch (err) {
+      console.error('Move to folder failed:', err);
+      showStatus('Failed to move to folder');
+    }
+  }
+
+  function closeAllSwipePanels() {
+    showSwipeDocPanel = false;
+    showSwipeNotionPanel = false;
+    showSwipeFolderPanel = false;
+    swipeDocQuery = '';
+    swipeDocResults = [];
+    swipeNotionQuery = '';
+    swipeNotionResults = [];
+    swipeNewFolderInput = false;
+    swipeNewFolderName = '';
+  }
 </script>
 
 <div class="min-h-screen" style="background: var(--bg-primary);">
@@ -401,12 +668,18 @@
         </svg>
         <span class="font-semibold" style="color: var(--text-primary);">Bookmark Sort</span>
       </div>
-      <button onclick={() => showSettingsModal = true} class="btn btn-secondary">
-        Settings
-      </button>
+      <div class="flex items-center gap-2">
+        <button onclick={toggleSwipeMode} class="mode-toggle">
+          {swipeMode ? 'Grid' : 'Cards'}
+        </button>
+        <button onclick={() => showSettingsModal = true} class="btn btn-secondary">
+          Settings
+        </button>
+      </div>
     </div>
   </header>
 
+  {#if !swipeMode}
   <main class="max-w-5xl mx-auto px-5 py-6">
     <!-- Toolbar -->
     <div class="flex items-center gap-3 mb-5">
@@ -787,6 +1060,209 @@
     </div>
   {/if}
 
+  {:else}
+    <!-- Swipe Mode -->
+    <div class="swipe-container">
+      <!-- Toolbar -->
+      <div class="swipe-toolbar">
+        <span class="swipe-progress">
+          {$filteredBookmarks.length > 0 ? Math.min(swipeIndex + 1, $filteredBookmarks.length) : 0} / {$filteredBookmarks.length}
+        </span>
+        <div class="flex-1"></div>
+        <select
+          value={$filters.folder || ''}
+          onchange={(e) => { filters.update(f => ({ ...f, folder: (e.target as HTMLSelectElement).value || null })); swipeIndex = 0; }}
+        >
+          <option value="">All Folders</option>
+          {#each $folders as folder}
+            <option value={folder}>{folder}</option>
+          {/each}
+        </select>
+        <select
+          value={$filters.status}
+          onchange={(e) => { filters.update(f => ({ ...f, status: (e.target as HTMLSelectElement).value as any })); swipeIndex = 0; }}
+        >
+          <option value="all">All</option>
+          <option value="pending">Not routed</option>
+          <option value="routed">Routed</option>
+        </select>
+        <button onclick={() => showImportModal = true} class="mode-toggle">Import</button>
+      </div>
+
+      <!-- Swipe Area -->
+      <div class="swipe-area">
+        {#if $filteredBookmarks[swipeIndex]}
+          {@const bookmark = $filteredBookmarks[swipeIndex]}
+          <div
+            class="swipe-card-wrapper"
+            ontouchstart={onSwipeTouchStart}
+            ontouchmove={onSwipeTouchMove}
+            ontouchend={onSwipeTouchEnd}
+            role="button"
+            tabindex="0"
+            style="transform: translateX({swipeDeltaX}px) rotate({swipeDeltaX * 0.03}deg); {swipeAnimating ? 'transition: transform 250ms ease-out;' : ''}"
+          >
+            <!-- Swipe indicators -->
+            {#if swipeDeltaX > 20}
+              <div class="swipe-indicator right" style="opacity: {Math.min(swipeDeltaX / 100, 1)}">
+                INSTAPAPER
+              </div>
+            {/if}
+            {#if swipeDeltaX < -20}
+              <div class="swipe-indicator left" style="opacity: {Math.min(Math.abs(swipeDeltaX) / 100, 1)}">
+                SKIP
+              </div>
+            {/if}
+
+            <div class="swipe-card">
+              <!-- Header -->
+              <div class="flex items-center gap-2 mb-2">
+                <span class="font-semibold" style="color: var(--text-primary);">@{bookmark.author_handle}</span>
+                <span class="text-xs" style="color: var(--text-muted);">{formatDate(bookmark.created_at)}</span>
+                {#if bookmark.archivly_folder}
+                  <span class="badge badge-muted ml-auto">{bookmark.archivly_folder}</span>
+                {/if}
+              </div>
+
+              <!-- Routed badges -->
+              {#if bookmark.routed_to && bookmark.routed_to.length > 0}
+                <div class="flex flex-wrap gap-1 mb-2">
+                  {#each bookmark.routed_to as dest}
+                    <span class="badge badge-success">{dest.name}</span>
+                  {/each}
+                </div>
+              {/if}
+
+              <!-- Text -->
+              <p class="text-sm leading-relaxed whitespace-pre-wrap" style="color: var(--text-primary);">{bookmark.text}</p>
+
+              <!-- Quoted Tweet -->
+              {#if bookmark.quoted_post_url}
+                {@const quotedMatch = bookmark.quoted_post_url.match(/(?:twitter\.com|x\.com)\/(\w+)\/status\/(\d+)/)}
+                <a
+                  href={bookmark.quoted_post_url}
+                  target="_blank"
+                  rel="noopener"
+                  class="mt-2 block rounded-lg p-3"
+                  style="background: var(--bg-hover); border: 1px solid var(--border-light);"
+                >
+                  <div class="flex items-center gap-2 mb-1">
+                    <span class="text-xs font-medium" style="color: var(--accent);">
+                      @{bookmark.quoted_tweet?.author_handle || quotedMatch?.[1] || 'unknown'}
+                    </span>
+                  </div>
+                  {#if bookmark.quoted_tweet}
+                    <p class="text-xs leading-relaxed mt-1" style="color: var(--text-secondary);">
+                      {bookmark.quoted_tweet.text.length > 200 ? bookmark.quoted_tweet.text.slice(0, 200) + '...' : bookmark.quoted_tweet.text}
+                    </p>
+                  {:else}
+                    <span class="text-xs" style="color: var(--text-muted);">View quoted post</span>
+                  {/if}
+                </a>
+              {/if}
+
+              <!-- Image -->
+              {#if bookmark.media_urls && bookmark.media_urls.length > 0 && bookmark.media_urls[0].startsWith('http')}
+                <img
+                  src={bookmark.media_urls[0]}
+                  alt=""
+                  class="mt-3 rounded w-full object-cover"
+                  style="max-height: 200px;"
+                />
+              {/if}
+
+              <!-- Link -->
+              {#if bookmark.urls.length > 0}
+                <a
+                  href={bookmark.urls[0]}
+                  target="_blank"
+                  rel="noopener"
+                  class="mt-2 block rounded-lg p-2"
+                  style="background: var(--bg-hover); border: 1px solid var(--border-light);"
+                >
+                  {#if bookmark.link_title}
+                    <div class="text-sm font-medium mb-1" style="color: var(--text-primary);">{bookmark.link_title}</div>
+                  {/if}
+                  <div class="text-xs truncate" style="color: var(--accent);">
+                    {bookmark.urls[0].replace(/^https?:\/\/(www\.)?/, '').slice(0, 60)}
+                  </div>
+                </a>
+              {/if}
+
+              <!-- Footer -->
+              <div class="mt-3 text-xs" style="color: var(--text-muted);">
+                <a
+                  href="https://x.com/{bookmark.author_handle}/status/{bookmark.tweet_id}"
+                  target="_blank"
+                  rel="noopener"
+                  style="color: var(--accent);"
+                >
+                  View on X
+                </a>
+              </div>
+            </div>
+          </div>
+        {:else}
+          <!-- All caught up -->
+          <div class="swipe-done">
+            <div style="font-size: 48px; margin-bottom: 16px; color: var(--success);">&#10003;</div>
+            <h2 style="font-size: 20px; font-weight: 600; color: var(--text-primary); margin-bottom: 8px;">All caught up!</h2>
+            <p style="font-size: 14px; color: var(--text-muted);">No more bookmarks to sort.</p>
+            <button onclick={() => { swipeIndex = 0; }} class="btn btn-secondary" style="margin-top: 16px; width: auto;">Start over</button>
+          </div>
+        {/if}
+      </div>
+
+      <!-- Action Buttons -->
+      {#if $filteredBookmarks[swipeIndex]}
+        <div class="swipe-actions">
+          <button class="swipe-action-btn" onclick={swipeSkip} disabled={swipeAnimating}>
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
+            </svg>
+            <span>Skip</span>
+          </button>
+          {#if $destinations.some(d => d.type === 'instapaper')}
+            <button class="swipe-action-btn primary" onclick={() => completeSwipe('right')} disabled={swipeAnimating}>
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/>
+              </svg>
+              <span>Read</span>
+            </button>
+          {/if}
+          {#if googleAccounts.length > 0}
+            <button class="swipe-action-btn" onclick={() => { closeAllSwipePanels(); showSwipeDocPanel = true; }} disabled={swipeAnimating}>
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/>
+              </svg>
+              <span>Doc</span>
+            </button>
+          {/if}
+          {#if notionStatus.connected}
+            <button class="swipe-action-btn" onclick={() => { closeAllSwipePanels(); showSwipeNotionPanel = true; }} disabled={swipeAnimating}>
+              <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 20H5a2 2 0 01-2-2V6a2 2 0 012-2h10a2 2 0 012 2v1m2 13a2 2 0 01-2-2V7m2 13a2 2 0 002-2V9a2 2 0 00-2-2h-2m-4-3H9M7 16h6M7 8h6v4H7V8z"/>
+              </svg>
+              <span>Notion</span>
+            </button>
+          {/if}
+          <button class="swipe-action-btn" onclick={() => { closeAllSwipePanels(); showSwipeFolderPanel = true; }} disabled={swipeAnimating}>
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
+            </svg>
+            <span>Folder</span>
+          </button>
+          <button class="swipe-action-btn danger" onclick={swipeDelete} disabled={swipeAnimating}>
+            <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
+            </svg>
+            <span>Delete</span>
+          </button>
+        </div>
+      {/if}
+    </div>
+  {/if}
+
   <!-- Import Modal -->
   {#if showImportModal}
     <div class="modal-backdrop fixed inset-0 flex items-center justify-center z-50">
@@ -906,6 +1382,135 @@
             {isCreatingDoc ? 'Creating...' : 'Create'}
           </button>
         </div>
+      </div>
+    </div>
+  {/if}
+
+  <!-- Swipe Mode: Doc Search Bottom Sheet -->
+  {#if showSwipeDocPanel}
+    <div class="bottom-sheet-backdrop" onclick={closeAllSwipePanels} onkeydown={(e) => { if (e.key === 'Escape') closeAllSwipePanels(); }} role="button" tabindex="-1" aria-label="Close panel"></div>
+    <div class="bottom-sheet">
+      <div class="bottom-sheet-handle"></div>
+      <h3 class="text-sm font-semibold mb-3" style="color: var(--text-primary);">Send to Google Doc</h3>
+      <input
+        type="text"
+        placeholder="Search your docs..."
+        value={swipeDocQuery}
+        oninput={handleSwipeDocSearch}
+        class="w-full mb-3"
+      />
+      {#if isSwipeDocSearching}
+        <p class="text-sm" style="color: var(--text-muted);">Searching...</p>
+      {:else if swipeDocResults.length > 0}
+        <div class="space-y-1">
+          {#each swipeDocResults as doc}
+            <button
+              onclick={() => swipeSendToDoc(doc)}
+              class="w-full text-left p-3 rounded-lg text-sm"
+              style="color: var(--text-primary); border: 1px solid var(--border-light);"
+            >
+              {doc.name}
+            </button>
+          {/each}
+        </div>
+      {:else if swipeDocQuery.length >= 2}
+        <p class="text-sm" style="color: var(--text-muted);">No docs found</p>
+      {/if}
+    </div>
+  {/if}
+
+  <!-- Swipe Mode: Notion Search Bottom Sheet -->
+  {#if showSwipeNotionPanel}
+    <div class="bottom-sheet-backdrop" onclick={closeAllSwipePanels} onkeydown={(e) => { if (e.key === 'Escape') closeAllSwipePanels(); }} role="button" tabindex="-1" aria-label="Close panel"></div>
+    <div class="bottom-sheet">
+      <div class="bottom-sheet-handle"></div>
+      <h3 class="text-sm font-semibold mb-3" style="color: var(--text-primary);">Send to Notion Page</h3>
+      <input
+        type="text"
+        placeholder="Search Notion pages..."
+        value={swipeNotionQuery}
+        oninput={handleSwipeNotionSearch}
+        class="w-full mb-3"
+      />
+      {#if isSwipeNotionSearching}
+        <p class="text-sm" style="color: var(--text-muted);">Searching...</p>
+      {:else if swipeNotionResults.length > 0}
+        <div class="space-y-1">
+          {#each swipeNotionResults as page}
+            <button
+              onclick={() => swipeSendToNotion(page)}
+              class="w-full text-left p-3 rounded-lg text-sm"
+              style="color: var(--text-primary); border: 1px solid var(--border-light);"
+            >
+              {page.title}
+            </button>
+          {/each}
+        </div>
+      {:else if swipeNotionQuery.length >= 2}
+        <p class="text-sm" style="color: var(--text-muted);">No pages found</p>
+      {/if}
+    </div>
+  {/if}
+
+  <!-- Swipe Mode: Folder Picker Bottom Sheet -->
+  {#if showSwipeFolderPanel}
+    <div class="bottom-sheet-backdrop" onclick={closeAllSwipePanels} onkeydown={(e) => { if (e.key === 'Escape') closeAllSwipePanels(); }} role="button" tabindex="-1" aria-label="Close panel"></div>
+    <div class="bottom-sheet">
+      <div class="bottom-sheet-handle"></div>
+      <h3 class="text-sm font-semibold mb-3" style="color: var(--text-primary);">Move to Folder</h3>
+      <div class="space-y-1">
+        {#if swipeNewFolderInput}
+          <div class="flex gap-2">
+            <input
+              type="text"
+              bind:value={swipeNewFolderName}
+              placeholder="New folder name..."
+              class="flex-1"
+              onkeydown={(e) => {
+                if (e.key === 'Enter' && swipeNewFolderName.trim()) {
+                  swipeMoveToFolder(swipeNewFolderName.trim());
+                  swipeNewFolderInput = false;
+                  swipeNewFolderName = '';
+                } else if (e.key === 'Escape') {
+                  swipeNewFolderInput = false;
+                  swipeNewFolderName = '';
+                }
+              }}
+            />
+            <button
+              onclick={() => {
+                if (swipeNewFolderName.trim()) swipeMoveToFolder(swipeNewFolderName.trim());
+                swipeNewFolderInput = false;
+                swipeNewFolderName = '';
+              }}
+              class="btn btn-primary" style="width: auto;"
+            >Add</button>
+          </div>
+        {:else}
+          <button
+            onclick={() => { swipeNewFolderInput = true; }}
+            class="w-full text-left p-3 rounded-lg text-sm font-medium"
+            style="color: var(--accent); border: 1px dashed var(--accent);"
+          >
+            + New Folder
+          </button>
+        {/if}
+        <button
+          onclick={() => swipeMoveToFolder(null)}
+          class="w-full text-left p-3 rounded-lg text-sm"
+          style="color: var(--text-muted); border: 1px solid var(--border-light);"
+        >
+          Remove from folder
+        </button>
+        {#each $folders as folder}
+          <button
+            onclick={() => swipeMoveToFolder(folder)}
+            class="w-full text-left p-3 rounded-lg text-sm"
+            style="color: var(--text-primary); border: 1px solid var(--border-light);"
+          >
+            {folder}
+          </button>
+        {/each}
       </div>
     </div>
   {/if}
