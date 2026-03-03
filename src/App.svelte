@@ -3,6 +3,7 @@
   import { bookmarks, searchQuery, searchResults, isSearching, selectedIds, filters, filteredBookmarks, stats, destinations, folders } from './stores/bookmarks';
   import * as api from './lib/api';
   import type { Bookmark, Destination } from './lib/types';
+  import SwipeMode from './SwipeMode.svelte';
 
   // View mode: 'swipe' for Tinder-style, 'list' for power user view
   let viewMode: 'swipe' | 'list' = 'list';
@@ -45,6 +46,7 @@
   });
 
   let showImportModal = false;
+  let swipeMode = false;
   let showSettingsModal = false;
   let importContent = '';
   let importStatus = '';
@@ -99,6 +101,9 @@
 
   // Load data on mount
   onMount(async () => {
+    if (window.innerWidth <= 768) {
+      swipeMode = true;
+    }
     try {
       // Load all data in parallel for fast startup
       const [bookmarkData, destData] = await Promise.all([
