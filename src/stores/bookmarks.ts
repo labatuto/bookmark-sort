@@ -51,7 +51,8 @@ export const filteredBookmarks = derived(
     }
 
     if ($filters.tag) {
-      result = result.filter(b => b.tags.includes($filters.tag));
+      const tag = $filters.tag;
+      result = result.filter(b => b.tags.includes(tag));
     }
 
     return result;

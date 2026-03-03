@@ -13,6 +13,10 @@ export interface Bookmark {
   tags: string[];
   archivly_folder: string;
   quoted_post_url?: string;
+  quoted_tweet?: {
+    text: string;
+    author_handle: string;
+  };
   link_title?: string;
   status: 'pending' | 'routed' | 'archived';
   embedding?: number[];
