@@ -32,12 +32,12 @@
     "svelte": "^5.43.8",
     "svelte-check": "^4.3.4",
     "tailwindcss": "^4.1.18",
-    "tsx": "^4.21.0",
     "typescript": "~5.9.3",
     "vite": "^7.2.4"
   },
   "dependencies": {
     "better-sqlite3": "^12.5.0",
+    "tsx": "^4.21.0",
     "cors": "^2.8.5",
     "dotenv": "^17.2.3",
     "express": "^5.2.1",
@@ -46,8 +46,6 @@
     "uuid": "^13.0.0"
   },
   "optionalDependencies": {
-    "@rollup/rollup-linux-x64-gnu": "^4.59.0",
-    "@rollup/rollup-linux-x64-musl": "^4.59.0",
     "puppeteer": "^24.34.0"
   }
 }
