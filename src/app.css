@@ -306,3 +306,235 @@ input[type="text"]:focus, select:focus, textarea:focus {
     width: 100%;
   }
 }
+
+/* ============================================
+   Swipe Mode Styles
+   ============================================ */
+
+.swipe-container {
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 53px);
+  overflow: hidden;
+  background: var(--bg-primary);
+}
+
+.swipe-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 16px;
+  border-bottom: 1px solid var(--border-light);
+  background: white;
+  flex-shrink: 0;
+}
+
+.swipe-toolbar select {
+  font-size: 13px;
+  padding: 4px 8px;
+}
+
+.swipe-progress {
+  font-size: 13px;
+  color: var(--text-muted);
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+}
+
+.swipe-area {
+  flex: 1;
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+}
+
+.swipe-card-wrapper {
+  width: 100%;
+  max-width: 500px;
+  position: relative;
+  touch-action: pan-y;
+  will-change: transform;
+}
+
+.swipe-card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-light);
+  border-radius: 12px;
+  box-shadow: var(--shadow-md);
+  padding: 16px;
+  overflow-y: auto;
+  max-height: calc(100vh - 220px);
+  -webkit-overflow-scrolling: touch;
+}
+
+.swipe-indicator {
+  position: absolute;
+  top: 12px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 1px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  z-index: 10;
+  pointer-events: none;
+}
+
+.swipe-indicator.right {
+  right: 12px;
+  background: var(--success-light);
+  color: #065f46;
+  border: 2px solid var(--success);
+}
+
+.swipe-indicator.left {
+  left: 12px;
+  background: var(--bg-hover);
+  color: var(--text-muted);
+  border: 2px solid var(--border-medium);
+}
+
+/* Action buttons row */
+.swipe-actions {
+  display: flex;
+  justify-content: center;
+  gap: 6px;
+  padding: 10px 12px;
+  padding-bottom: max(10px, env(safe-area-inset-bottom));
+  background: white;
+  border-top: 1px solid var(--border-light);
+  flex-shrink: 0;
+}
+
+.swipe-action-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: none;
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 600;
+  cursor: pointer;
+  min-width: 52px;
+  transition: all 0.1s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.swipe-action-btn:active {
+  transform: scale(0.95);
+  background: var(--border-light);
+}
+
+.swipe-action-btn:disabled {
+  opacity: 0.5;
+  pointer-events: none;
+}
+
+.swipe-action-btn.primary {
+  background: var(--accent-light);
+  color: var(--accent-hover);
+}
+
+.swipe-action-btn.primary:active {
+  background: var(--accent);
+  color: white;
+}
+
+.swipe-action-btn.danger {
+  background: var(--danger-light);
+  color: var(--danger);
+}
+
+.swipe-action-btn.danger:active {
+  background: var(--danger);
+  color: white;
+}
+
+/* "All caught up" screen */
+.swipe-done {
+  text-align: center;
+  padding: 40px 20px;
+}
+
+/* Bottom sheet */
+.bottom-sheet-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(15, 23, 42, 0.3);
+  z-index: 100;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.bottom-sheet {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: white;
+  border-radius: 16px 16px 0 0;
+  padding: 12px 16px;
+  padding-bottom: max(16px, env(safe-area-inset-bottom));
+  max-height: 65vh;
+  overflow-y: auto;
+  z-index: 101;
+  box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.12);
+  -webkit-overflow-scrolling: touch;
+}
+
+.bottom-sheet-handle {
+  width: 36px;
+  height: 4px;
+  background: var(--border-medium);
+  border-radius: 2px;
+  margin: 0 auto 12px;
+}
+
+/* Mode toggle button */
+.mode-toggle {
+  font-weight: 500;
+  font-size: 13px;
+  padding: 6px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  border: none;
+  background: var(--bg-hover);
+  color: var(--text-secondary);
+  transition: all 0.15s ease;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.mode-toggle:hover {
+  background: var(--border-light);
+}
+
+@media (max-width: 768px) {
+  .swipe-toolbar select {
+    font-size: 14px;
+    padding: 6px 8px;
+  }
+
+  .swipe-action-btn {
+    min-width: 48px;
+    padding: 8px 6px;
+    font-size: 10px;
+  }
+
+  .swipe-card {
+    max-height: calc(100vh - 240px);
+  }
+
+  .bottom-sheet {
+    max-height: 70vh;
+  }
+
+  .mode-toggle {
+    font-size: 14px;
+    padding: 10px 12px;
+  }
+}
