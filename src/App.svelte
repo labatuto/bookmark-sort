@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onMount } from 'svelte';
+  import { onMount, onDestroy } from 'svelte';
   import { bookmarks, searchQuery, searchResults, isSearching, selectedIds, filters, filteredBookmarks, stats, destinations, folders } from './stores/bookmarks';
   import * as api from './lib/api';
   import type { Bookmark, Destination } from './lib/types';
@@ -18,6 +18,31 @@
   let swipeNewFolderName = '';
   let showNewDocModalForSwipe = false;
   let swipeNewDocTitle = '';
+
+  // Keyboard navigation
+  let focusedIndex = -1;
+  let searchInputRef: HTMLInputElement;
+
+  // Find Similar feature
+  let similarBookmarks: Bookmark[] = [];
+  let showSimilarPanel = false;
+  let similarSourceId: string | null = null;
+  let isLoadingSimilar = false;
+
+  // Quick filters
+  let quickFilters = {
+    hasLinks: false,
+    hasImages: false,
+    byAuthor: '' as string,
+  };
+
+  // Apply quick filters on top of store filters
+  $: displayedBookmarks = $filteredBookmarks.filter(b => {
+    if (quickFilters.hasLinks && (!b.urls || b.urls.length === 0)) return false;
+    if (quickFilters.hasImages && (!b.media_urls || b.media_urls.length === 0)) return false;
+    if (quickFilters.byAuthor && b.author_handle !== quickFilters.byAuthor) return false;
+    return true;
+  });
 
   let showImportModal = false;
   let showSettingsModal = false;
@@ -75,21 +100,110 @@
   // Load data on mount
   onMount(async () => {
     try {
+      // Load all data in parallel for fast startup
       const [bookmarkData, destData] = await Promise.all([
         api.fetchBookmarks(),
         api.fetchDestinations(),
       ]);
       bookmarks.set(bookmarkData);
       destinations.set(destData);
-      await loadGoogleAccounts();
-      await loadXStatus();
-      await loadNotionStatus();
+
+      // Load status checks in parallel (non-blocking)
+      Promise.all([
+        loadGoogleAccounts(),
+        loadXStatus(),
+        loadNotionStatus(),
+      ]).catch(err => console.error('Failed to load status:', err));
     } catch (err) {
       console.error('Failed to load data:', err);
     } finally {
       isLoading = false;
     }
+
+    // Add keyboard shortcuts
+    document.addEventListener('keydown', handleKeyDown);
   });
+
+  onDestroy(() => {
+    document.removeEventListener('keydown', handleKeyDown);
+  });
+
+  // Keyboard shortcuts handler
+  function handleKeyDown(e: KeyboardEvent) {
+    // Skip if typing in an input
+    const target = e.target as HTMLElement;
+    if (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable) {
+      // But allow Escape to blur
+      if (e.key === 'Escape') {
+        target.blur();
+        focusedIndex = -1;
+      }
+      return;
+    }
+
+    const bookmarkList = $filteredBookmarks;
+
+    switch (e.key) {
+      case 'j': // Next item
+        e.preventDefault();
+        focusedIndex = Math.min(focusedIndex + 1, bookmarkList.length - 1);
+        scrollToFocused();
+        break;
+      case 'k': // Previous item
+        e.preventDefault();
+        focusedIndex = Math.max(focusedIndex - 1, 0);
+        scrollToFocused();
+        break;
+      case ' ': // Toggle selection
+        e.preventDefault();
+        if (focusedIndex >= 0 && focusedIndex < bookmarkList.length) {
+          toggleSelection(bookmarkList[focusedIndex].id);
+        }
+        break;
+      case '/': // Focus search
+        e.preventDefault();
+        searchInputRef?.focus();
+        break;
+      case 'Escape': // Clear selection and close panels
+        e.preventDefault();
+        clearSelection();
+        showSimilarPanel = false;
+        focusedIndex = -1;
+        break;
+      case 's': // Find similar for focused item
+        e.preventDefault();
+        if (focusedIndex >= 0 && focusedIndex < bookmarkList.length) {
+          findSimilar(bookmarkList[focusedIndex].id);
+        }
+        break;
+      case 'a': // Select all
+        if (e.metaKey || e.ctrlKey) {
+          e.preventDefault();
+          selectAll();
+        }
+        break;
+    }
+  }
+
+  function scrollToFocused() {
+    const element = document.querySelector(`[data-index="${focusedIndex}"]`);
+    element?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  }
+
+  // Find similar bookmarks
+  async function findSimilar(bookmarkId: string) {
+    isLoadingSimilar = true;
+    similarSourceId = bookmarkId;
+    showSimilarPanel = true;
+    try {
+      similarBookmarks = await api.findSimilarBookmarks(bookmarkId, 8);
+    } catch (err) {
+      console.error('Find similar failed:', err);
+      similarBookmarks = [];
+    } finally {
+      isLoadingSimilar = false;
+    }
+  }
 
   async function loadXStatus() {
     try {

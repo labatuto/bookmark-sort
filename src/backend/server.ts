@@ -6,7 +6,7 @@ import { fileURLToPath } from 'url';
 import { v4 as uuidv4 } from 'uuid';
 import * as db from './db.js';
 import { importBookmarks, importBookmarksWithUnfurling, parseContent } from './importer.js';
-import { initOpenAI, embedUnprocessedBookmarks, searchBookmarks } from './embeddings.js';
+import { initOpenAI, embedUnprocessedBookmarks, searchBookmarks, findSimilarBookmarks } from './embeddings.js';
 import { sendToInstapaper, testInstapaperCredentials } from './connectors/instapaper.js';
 import {
   listFilesInFolder,
@@ -160,6 +160,21 @@ app.post('/api/search', async (req, res) => {
     ].slice(0, limit);
 
     res.json(combined);
+  } catch (err) {
+    res.status(500).json({ error: String(err) });
+  }
+});
+
+// Find similar bookmarks by ID (uses stored embeddings, no API call needed)
+app.get('/api/bookmarks/:id/similar', (req, res) => {
+  try {
+    const { id } = req.params;
+    const limit = parseInt(req.query.limit as string) || 10;
+
+    const allBookmarks = db.getAllBookmarks();
+    const similar = findSimilarBookmarks(id, allBookmarks, limit);
+
+    res.json(similar);
   } catch (err) {
     res.status(500).json({ error: String(err) });
   }

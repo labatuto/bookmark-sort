@@ -164,6 +164,69 @@ function initSchemaSync() {
     CREATE INDEX IF NOT EXISTS idx_bookmarks_folder ON bookmarks(archivly_folder);
     CREATE INDEX IF NOT EXISTS idx_bookmarks_tweet_id ON bookmarks(tweet_id);
   `);
+
+  // Migration: Add quoted_post_url column if it doesn't exist
+  try {
+    db.exec(`ALTER TABLE bookmarks ADD COLUMN quoted_post_url TEXT`);
+  } catch (e: any) {
+    // Column already exists, ignore
+    if (!e.message.includes('duplicate column name')) {
+      throw e;
+    }
+  }
+
+  // Migration: Add link_title column if it doesn't exist
+  try {
+    db.exec(`ALTER TABLE bookmarks ADD COLUMN link_title TEXT`);
+  } catch (e: any) {
+    // Column already exists, ignore
+    if (!e.message.includes('duplicate column name')) {
+      throw e;
+    }
+  }
+
+  // Migration: Add unique index on tweet_id in unbookmark_queue to prevent duplicates
+  try {
+    // First, clean up existing duplicates (keep the oldest entry)
+    db.exec(`
+      DELETE FROM unbookmark_queue
+      WHERE id NOT IN (
+        SELECT MIN(id) FROM unbookmark_queue GROUP BY tweet_id
+      )
+    `);
+    // Then add unique index
+    db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_unbookmark_queue_tweet_unique ON unbookmark_queue(tweet_id)`);
+  } catch (e: any) {
+    // Index might already exist
+    if (!e.message.includes('already exists')) {
+      console.error('Migration error:', e.message);
+    }
+  }
+
+  // Migration: Remove foreign key from unbookmark_queue (so we can delete bookmarks while keeping queue)
+  try {
+    // Check if the table has a foreign key by looking at the schema
+    const tableInfo = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='unbookmark_queue'").get() as any;
+    if (tableInfo?.sql?.includes('FOREIGN KEY')) {
+      console.log('Migrating unbookmark_queue to remove foreign key...');
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS unbookmark_queue_new (
+          id TEXT PRIMARY KEY,
+          tweet_id TEXT NOT NULL,
+          bookmark_id TEXT,
+          author_handle TEXT,
+          added_at TEXT DEFAULT (datetime('now'))
+        );
+        INSERT OR IGNORE INTO unbookmark_queue_new SELECT * FROM unbookmark_queue;
+        DROP TABLE unbookmark_queue;
+        ALTER TABLE unbookmark_queue_new RENAME TO unbookmark_queue;
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_unbookmark_queue_tweet_unique ON unbookmark_queue(tweet_id);
+      `);
+      console.log('Migration complete');
+    }
+  } catch (e: any) {
+    console.error('Migration error (remove FK):', e.message);
+  }
 }
 
 // Helper to parse bookmark row
@@ -310,9 +373,9 @@ export async function getAllBookmarks() {
   }
 
   // Build tweet_id -> bookmark map for quoted tweet lookups
-  const tweetIdToBookmark = new Map<string, { text: string; author_handle: string }>();
+  const tweetIdToBookmark = new Map<string, { text: string; author_handle: string; media_urls?: string[] }>();
   for (const b of bookmarks) {
-    tweetIdToBookmark.set(b.tweet_id, { text: b.text, author_handle: b.author_handle });
+    tweetIdToBookmark.set(b.tweet_id, { text: b.text, author_handle: b.author_handle, media_urls: b.media_urls });
   }
 
   const extractTweetId = (url: string): string | null => {
@@ -343,6 +406,7 @@ export async function getAllBookmarks() {
           quoted_tweet = {
             text: quotedBookmark.text,
             author_handle: quotedBookmark.author_handle,
+            media_urls: quotedBookmark.media_urls || [],
           };
         }
       }

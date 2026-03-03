@@ -16,6 +16,7 @@ export interface Bookmark {
   quoted_tweet?: {
     text: string;
     author_handle: string;
+    media_urls?: string[];
   };
   link_title?: string;
   status: 'pending' | 'routed' | 'archived';

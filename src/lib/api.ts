@@ -52,6 +52,13 @@ export async function searchBookmarks(query: string, limit = 50) {
   return res.json();
 }
 
+// Find similar bookmarks
+export async function findSimilarBookmarks(bookmarkId: string, limit = 10) {
+  const res = await fetch(`${API_BASE}/bookmarks/${bookmarkId}/similar?limit=${limit}`);
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
 // Embeddings
 export async function generateEmbeddings() {
   const res = await fetch(`${API_BASE}/embeddings/generate`, {

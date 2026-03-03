@@ -123,3 +123,26 @@ export async function searchBookmarks(
 
   return results;
 }
+
+// Find similar bookmarks by bookmark ID (uses existing embedding)
+export function findSimilarBookmarks(
+  bookmarkId: string,
+  allBookmarks: Array<{ id: string; embedding?: number[]; [key: string]: any }>,
+  topK: number = 10
+): Array<{ id: string; similarity: number; [key: string]: any }> {
+  const targetBookmark = allBookmarks.find(b => b.id === bookmarkId);
+  if (!targetBookmark || !targetBookmark.embedding || targetBookmark.embedding.length === 0) {
+    return [];
+  }
+
+  const results = allBookmarks
+    .filter(b => b.id !== bookmarkId && b.embedding && b.embedding.length > 0)
+    .map(bookmark => ({
+      ...bookmark,
+      similarity: cosineSimilarity(targetBookmark.embedding!, bookmark.embedding!),
+    }))
+    .sort((a, b) => b.similarity - a.similarity)
+    .slice(0, topK);
+
+  return results;
+}
