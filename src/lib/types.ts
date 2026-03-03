@@ -25,7 +25,7 @@ export interface Bookmark {
 }
 
 // Routing destination types
-export type DestinationType = 'instapaper' | 'notion_page' | 'gdrive_folder' | 'gdrive_doc' | 'local';
+export type DestinationType = 'instapaper' | 'notion_page' | 'gdrive_folder' | 'gdrive_doc' | 'local' | 'x' | 'google';
 
 export interface Destination {
   id: string;

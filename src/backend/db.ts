@@ -1,4 +1,5 @@
-import { createClient, Client, ResultSet } from '@libsql/client';
+import { createClient } from '@libsql/client';
+import type { Client, ResultSet } from '@libsql/client';
 import Database from 'better-sqlite3';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -167,49 +168,39 @@ function initSchemaSync() {
 
   // Migration: Add quoted_post_url column if it doesn't exist
   try {
-    db.exec(`ALTER TABLE bookmarks ADD COLUMN quoted_post_url TEXT`);
+    localDb.exec(`ALTER TABLE bookmarks ADD COLUMN quoted_post_url TEXT`);
   } catch (e: any) {
-    // Column already exists, ignore
-    if (!e.message.includes('duplicate column name')) {
-      throw e;
-    }
+    if (!e.message.includes('duplicate column name')) throw e;
   }
 
   // Migration: Add link_title column if it doesn't exist
   try {
-    db.exec(`ALTER TABLE bookmarks ADD COLUMN link_title TEXT`);
+    localDb.exec(`ALTER TABLE bookmarks ADD COLUMN link_title TEXT`);
   } catch (e: any) {
-    // Column already exists, ignore
-    if (!e.message.includes('duplicate column name')) {
-      throw e;
-    }
+    if (!e.message.includes('duplicate column name')) throw e;
   }
 
   // Migration: Add unique index on tweet_id in unbookmark_queue to prevent duplicates
   try {
-    // First, clean up existing duplicates (keep the oldest entry)
-    db.exec(`
+    localDb.exec(`
       DELETE FROM unbookmark_queue
       WHERE id NOT IN (
         SELECT MIN(id) FROM unbookmark_queue GROUP BY tweet_id
       )
     `);
-    // Then add unique index
-    db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_unbookmark_queue_tweet_unique ON unbookmark_queue(tweet_id)`);
+    localDb.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_unbookmark_queue_tweet_unique ON unbookmark_queue(tweet_id)`);
   } catch (e: any) {
-    // Index might already exist
     if (!e.message.includes('already exists')) {
       console.error('Migration error:', e.message);
     }
   }
 
-  // Migration: Remove foreign key from unbookmark_queue (so we can delete bookmarks while keeping queue)
+  // Migration: Remove foreign key from unbookmark_queue
   try {
-    // Check if the table has a foreign key by looking at the schema
-    const tableInfo = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='unbookmark_queue'").get() as any;
+    const tableInfo = localDb.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='unbookmark_queue'").get() as any;
     if (tableInfo?.sql?.includes('FOREIGN KEY')) {
       console.log('Migrating unbookmark_queue to remove foreign key...');
-      db.exec(`
+      localDb.exec(`
         CREATE TABLE IF NOT EXISTS unbookmark_queue_new (
           id TEXT PRIMARY KEY,
           tweet_id TEXT NOT NULL,
@@ -686,7 +677,7 @@ export async function insertCachedTweet(tweet: {
 export async function getCachedTweet(tweetId: string) {
   if (USE_TURSO && tursoClient) {
     const result = await tursoClient.execute({ sql: 'SELECT * FROM cached_tweets WHERE tweet_id = ?', args: [tweetId] });
-    return result.rows[0] as { tweet_id: string; author_handle: string; author_name: string; text: string; fetched_at: string } | undefined;
+    return result.rows[0] as unknown as { tweet_id: string; author_handle: string; author_name: string; text: string; fetched_at: string } | undefined;
   } else if (localDb) {
     return localDb.prepare('SELECT * FROM cached_tweets WHERE tweet_id = ?').get(tweetId) as {
       tweet_id: string; author_handle: string; author_name: string; text: string; fetched_at: string;
@@ -696,7 +687,7 @@ export async function getCachedTweet(tweetId: string) {
 }
 
 export async function getCachedTweetsByIds(tweetIds: string[]) {
-  const map = new Map<string, { text: string; author_handle: string }>();
+  const map = new Map<string, { text: string; author_handle: string; media_urls?: string[] }>();
   if (tweetIds.length === 0) return map;
 
   if (USE_TURSO && tursoClient) {
@@ -731,7 +722,7 @@ export async function getBookmarksWithMissingQuotedTweets() {
   `;
   if (USE_TURSO && tursoClient) {
     const result = await tursoClient.execute(sql);
-    return result.rows as { id: string; quoted_post_url: string }[];
+    return result.rows as unknown as { id: string; quoted_post_url: string }[];
   } else if (localDb) {
     return localDb.prepare(sql).all() as { id: string; quoted_post_url: string }[];
   }

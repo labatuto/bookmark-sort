@@ -90,7 +90,7 @@ function parseArrayField(field: string[] | string | undefined): string[] {
 }
 
 // Normalize a single bookmark from various ArchivlyX formats
-function normalizeBookmark(raw: ArchivlyBookmark): {
+interface NormalizedBookmark {
   id: string;
   tweet_id: string;
   author_handle: string;
@@ -104,7 +104,9 @@ function normalizeBookmark(raw: ArchivlyBookmark): {
   archivly_folder: string | undefined;
   quoted_post_url: string | undefined;
   link_title: string | undefined;
-} | null {
+}
+
+function normalizeBookmark(raw: ArchivlyBookmark): NormalizedBookmark | null {
   const tweet_id = extractTweetId(raw);
   if (!tweet_id) return null;
 
@@ -171,7 +173,7 @@ function normalizeBookmark(raw: ArchivlyBookmark): {
 }
 
 // Import from JSON array
-export function importFromJson(jsonData: ArchivlyBookmark[]): ImportResult {
+export async function importFromJson(jsonData: ArchivlyBookmark[]): Promise<ImportResult> {
   const result: ImportResult = {
     total: jsonData.length,
     imported: 0,
@@ -189,12 +191,8 @@ export function importFromJson(jsonData: ArchivlyBookmark[]): ImportResult {
         continue;
       }
 
-      const inserted = insertBookmark(normalized);
-      if (inserted.changes > 0) {
-        result.imported++;
-      } else {
-        result.duplicates++;
-      }
+      await insertBookmark(normalized);
+      result.imported++;
     } catch (err) {
       result.errors++;
       result.errorMessages.push(`Error importing: ${err}`);
@@ -257,13 +255,13 @@ function parseCsvLine(line: string): string[] {
 }
 
 // Import from CSV
-export function importFromCsv(csvContent: string): ImportResult {
+export async function importFromCsv(csvContent: string): Promise<ImportResult> {
   const records = parseCsv(csvContent);
   return importFromJson(records);
 }
 
-// Auto-detect format and import (synchronous, no unfurling)
-export function importBookmarks(content: string): ImportResult {
+// Auto-detect format and import
+export async function importBookmarks(content: string): Promise<ImportResult> {
   const trimmed = content.trim();
 
   // Try JSON first
@@ -285,7 +283,7 @@ export function importBookmarks(content: string): ImportResult {
 }
 
 // Parse content without importing (for async import with unfurling)
-export function parseContent(content: string): ReturnType<typeof normalizeBookmark>[] {
+export function parseContent(content: string): NormalizedBookmark[] {
   const trimmed = content.trim();
   let rawData: ArchivlyBookmark[] = [];
 
@@ -402,12 +400,8 @@ export async function importBookmarksWithUnfurling(
         link_title: linkTitle,
       };
 
-      const inserted = insertBookmark(bookmarkWithUnfurled);
-      if (inserted.changes > 0) {
-        result.imported++;
-      } else {
-        result.duplicates++;
-      }
+      await insertBookmark(bookmarkWithUnfurled);
+      result.imported++;
     } catch (err) {
       result.errors++;
       result.errorMessages.push(`Error importing: ${err}`);

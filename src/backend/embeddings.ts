@@ -50,7 +50,7 @@ export async function generateEmbeddings(texts: string[]): Promise<number[][]> {
 export async function embedUnprocessedBookmarks(
   onProgress?: (processed: number, total: number) => void
 ): Promise<{ processed: number; errors: number }> {
-  const bookmarks = getBookmarksWithoutEmbeddings();
+  const bookmarks = await getBookmarksWithoutEmbeddings();
   let processed = 0;
   let errors = 0;
 
@@ -66,7 +66,7 @@ export async function embedUnprocessedBookmarks(
 
       for (let j = 0; j < batch.length; j++) {
         try {
-          updateBookmarkEmbedding(batch[j].id, embeddings[j]);
+          await updateBookmarkEmbedding(batch[j].id, embeddings[j]);
           processed++;
         } catch (err) {
           console.error(`Error saving embedding for ${batch[j].id}:`, err);

@@ -22,7 +22,7 @@
 
   // Keyboard navigation
   let focusedIndex = -1;
-  let searchInputRef: HTMLInputElement;
+  let searchInputRef: HTMLInputElement | undefined;
 
   // Find Similar feature
   let similarBookmarks: Bookmark[] = [];
@@ -51,7 +51,7 @@
   let importContent = '';
   let importStatus = '';
   let searchInput = '';
-  let searchTimeout: number;
+  let searchTimeout: ReturnType<typeof setTimeout>;
 
   // Google Drive state
   let googleAccounts: { id: string; name: string; email: string }[] = [];
@@ -59,7 +59,7 @@
   let docSearchQuery = '';
   let docSearchResults: { id: string; name: string }[] = [];
   let isSearchingDocs = false;
-  let docSearchTimeout: number;
+  let docSearchTimeout: ReturnType<typeof setTimeout>;
   let showDocDropdown = false;
 
   // New doc modal
@@ -73,7 +73,7 @@
 
   // Status toast
   let statusMessage = '';
-  let statusTimeout: number;
+  let statusTimeout: ReturnType<typeof setTimeout>;
 
   // Loading state for initial load
   let isLoading = true;
@@ -93,7 +93,7 @@
   let notionSearchQuery = '';
   let notionSearchResults: { id: string; title: string; url: string }[] = [];
   let isSearchingNotion = false;
-  let notionSearchTimeout: number;
+  let notionSearchTimeout: ReturnType<typeof setTimeout>;
   let showNotionDropdown = false;
 
   // Mobile filter panel
@@ -999,7 +999,7 @@
                   {/if}
                 </div>
 
-                {#if bookmark.routed_to?.length > 0}
+                {#if bookmark.routed_to && bookmark.routed_to.length > 0}
                   <div class="bookmark-routes">
                     {#each bookmark.routed_to as dest}
                       <span class="route-badge">{dest.name}</span>

@@ -166,12 +166,12 @@ app.post('/api/search', async (req, res) => {
 });
 
 // Find similar bookmarks by ID (uses stored embeddings, no API call needed)
-app.get('/api/bookmarks/:id/similar', (req, res) => {
+app.get('/api/bookmarks/:id/similar', async (req, res) => {
   try {
     const { id } = req.params;
     const limit = parseInt(req.query.limit as string) || 10;
 
-    const allBookmarks = db.getAllBookmarks();
+    const allBookmarks = await db.getAllBookmarks();
     const similar = findSimilarBookmarks(id, allBookmarks, limit);
 
     res.json(similar);
@@ -841,7 +841,7 @@ app.post('/api/quoted-tweets/fetch', async (req, res) => {
 // ============== ROUTING ==============
 
 // Helper function to queue tweet for unbookmarking after successful routing
-async function queueForUnbookmark(bookmarkId: string, tweetId: string, authorHandle: string): void {
+async function queueForUnbookmark(bookmarkId: string, tweetId: string, authorHandle: string): Promise<void> {
   try {
     await db.addToUnbookmarkQueue({
       id: uuidv4(),
@@ -1064,7 +1064,7 @@ app.post('/api/bookmarks/move-to-folder', async (req, res) => {
     if (!Array.isArray(bookmarkIds)) {
       return res.status(400).json({ error: 'bookmarkIds must be an array' });
     }
-    db.updateBookmarksFolderBulk(bookmarkIds, folder || null);
+    await db.updateBookmarksFolderBulk(bookmarkIds, folder || null);
     res.json({ success: true, moved: bookmarkIds.length });
   } catch (err) {
     res.status(500).json({ error: String(err) });
@@ -1110,7 +1110,7 @@ app.post('/api/bookmarks/delete', async (req, res) => {
 
 app.get('/api/bookmarks/:id/history', async (req, res) => {
   try {
-    const history = db.getRoutingHistoryForBookmark(req.params.id);
+    const history = await db.getRoutingHistoryForBookmark(req.params.id);
     res.json(history);
   } catch (err) {
     res.status(500).json({ error: String(err) });
@@ -1131,7 +1131,7 @@ function isBackfillableUrl(url: string): boolean {
 // Get status of link_title backfill
 app.get('/api/backfill/link-titles/status', async (req, res) => {
   try {
-    const bookmarks = db.getBookmarksWithoutLinkTitles();
+    const bookmarks = await db.getBookmarksWithoutLinkTitles();
     // Filter to only those with actual article URLs
     const needsBackfill = bookmarks.filter(b =>
       b.urls.some((u: string) => isBackfillableUrl(u))
@@ -1153,7 +1153,7 @@ app.get('/api/backfill/link-titles/status', async (req, res) => {
 app.post('/api/backfill/link-titles', async (req, res) => {
   try {
     const { limit = 50 } = req.body;
-    const bookmarks = db.getBookmarksWithoutLinkTitles();
+    const bookmarks = await db.getBookmarksWithoutLinkTitles();
 
     // Filter to only those with actual article URLs
     const needsBackfill = bookmarks
@@ -1177,7 +1177,7 @@ app.post('/api/backfill/link-titles', async (req, res) => {
       try {
         const result = await unfurlUrlWithPuppeteer(articleUrl);
         if (result.title) {
-          db.updateBookmarkLinkTitle(bookmark.id, result.title);
+          await db.updateBookmarkLinkTitle(bookmark.id, result.title);
           updated++;
           console.log(`[BACKFILL] Updated ${bookmark.id}: "${result.title}"`);
         }
@@ -1222,7 +1222,7 @@ app.post('/api/sync-folders', async (req, res) => {
 
     for (const bookmark of bookmarks) {
       // Check if this tweet exists in our database
-      const existing = db.getBookmarkByTweetId(bookmark.tweet_id);
+      const existing = await db.getBookmarkByTweetId(bookmark.tweet_id);
 
       if (!existing) {
         // Tweet was deleted or never imported - skip it
@@ -1234,7 +1234,7 @@ app.post('/api/sync-folders', async (req, res) => {
       if (bookmark.archivly_folder &&
           bookmark.archivly_folder !== 'unsorted' &&
           bookmark.archivly_folder !== existing.archivly_folder) {
-        db.updateBookmarkFolder(existing.id, bookmark.archivly_folder);
+        await db.updateBookmarkFolder(existing.id, bookmark.archivly_folder);
         updated++;
         console.log(`[SYNC] Updated folder for ${bookmark.tweet_id}: "${existing.archivly_folder}" -> "${bookmark.archivly_folder}"`);
       } else {
