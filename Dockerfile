@@ -8,7 +8,7 @@ RUN apt-get update && apt-get install -y python3 make g++ && rm -rf /var/lib/apt
 # Copy package files and install dependencies (no Puppeteer browser download)
 COPY package.json package-lock.json* ./
 ENV PUPPETEER_SKIP_DOWNLOAD=true
-RUN npm install && npm cache clean --force
+RUN npm ci && npm cache clean --force
 
 # Copy source code
 COPY . .
