@@ -51,6 +51,9 @@
   let notionSearchTimeout: number;
   let showNotionDropdown = false;
 
+  // Data loading state
+  let dataLoaded = false;
+
   // Swipe mode state
   let swipeMode = false;
   let swipeIndex = 0;
@@ -89,6 +92,7 @@
       ]);
       bookmarks.set(bookmarkData);
       destinations.set(destData);
+      dataLoaded = true;
       // Pre-load Google accounts (await to ensure ready)
       await loadGoogleAccounts();
       // Load X status
@@ -453,7 +457,8 @@
     }
 
     if (isSwipeGesture) {
-      e.preventDefault();
+      // Note: we rely on CSS touch-action: pan-y on the wrapper
+      // to prevent browser horizontal scroll instead of preventDefault()
       swipeDeltaX = deltaX;
     }
   }
@@ -1059,8 +1064,9 @@
       </div>
     </div>
   {/if}
+  {/if}
 
-  {:else}
+  {#if swipeMode}
     <!-- Swipe Mode -->
     <div class="swipe-container">
       <!-- Toolbar -->
@@ -1203,13 +1209,20 @@
             </div>
           </div>
         {:else}
-          <!-- All caught up -->
-          <div class="swipe-done">
-            <div style="font-size: 48px; margin-bottom: 16px; color: var(--success);">&#10003;</div>
-            <h2 style="font-size: 20px; font-weight: 600; color: var(--text-primary); margin-bottom: 8px;">All caught up!</h2>
-            <p style="font-size: 14px; color: var(--text-muted);">No more bookmarks to sort.</p>
-            <button onclick={() => { swipeIndex = 0; }} class="btn btn-secondary" style="margin-top: 16px; width: auto;">Start over</button>
-          </div>
+          {#if !dataLoaded}
+            <!-- Loading -->
+            <div class="swipe-done">
+              <p style="font-size: 14px; color: var(--text-muted);">Loading bookmarks...</p>
+            </div>
+          {:else}
+            <!-- All caught up -->
+            <div class="swipe-done">
+              <div style="font-size: 48px; margin-bottom: 16px; color: var(--success);">&#10003;</div>
+              <h2 style="font-size: 20px; font-weight: 600; color: var(--text-primary); margin-bottom: 8px;">All caught up!</h2>
+              <p style="font-size: 14px; color: var(--text-muted);">No more bookmarks to sort.</p>
+              <button onclick={() => { swipeIndex = 0; }} class="btn btn-secondary" style="margin-top: 16px; width: auto;">Start over</button>
+            </div>
+          {/if}
         {/if}
       </div>
 
