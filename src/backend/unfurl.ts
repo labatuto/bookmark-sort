@@ -9,6 +9,7 @@ let browserInstance: any = null;
 async function getPuppeteer() {
   if (!puppeteerModule) {
     try {
+      // @ts-ignore - puppeteer is optional
       puppeteerModule = (await import('puppeteer')).default;
     } catch {
       return null;
@@ -127,7 +128,7 @@ export async function unfurlUrlWithPuppeteer(url: string): Promise<UnfurlResult>
     // Try to get og:title first (usually better quality)
     const ogTitle = await page.$eval(
       'meta[property="og:title"]',
-      (el) => el.getAttribute('content')
+      (el: Element) => el.getAttribute('content')
     ).catch(() => null);
 
     if (ogTitle) {

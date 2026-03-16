@@ -50,7 +50,7 @@ export async function generateEmbeddings(texts: string[]): Promise<number[][]> {
 export async function embedUnprocessedBookmarks(
   onProgress?: (processed: number, total: number) => void
 ): Promise<{ processed: number; errors: number }> {
-  const bookmarks = getBookmarksWithoutEmbeddings();
+  const bookmarks = await getBookmarksWithoutEmbeddings();
   let processed = 0;
   let errors = 0;
 
@@ -66,7 +66,7 @@ export async function embedUnprocessedBookmarks(
 
       for (let j = 0; j < batch.length; j++) {
         try {
-          updateBookmarkEmbedding(batch[j].id, embeddings[j]);
+          await updateBookmarkEmbedding(batch[j].id, embeddings[j]);
           processed++;
         } catch (err) {
           console.error(`Error saving embedding for ${batch[j].id}:`, err);
@@ -117,6 +117,29 @@ export async function searchBookmarks(
     .map(bookmark => ({
       ...bookmark,
       similarity: cosineSimilarity(queryEmbedding, bookmark.embedding!),
+    }))
+    .sort((a, b) => b.similarity - a.similarity)
+    .slice(0, topK);
+
+  return results;
+}
+
+// Find similar bookmarks by bookmark ID (uses existing embedding)
+export function findSimilarBookmarks(
+  bookmarkId: string,
+  allBookmarks: Array<{ id: string; embedding?: number[]; [key: string]: any }>,
+  topK: number = 10
+): Array<{ id: string; similarity: number; [key: string]: any }> {
+  const targetBookmark = allBookmarks.find(b => b.id === bookmarkId);
+  if (!targetBookmark || !targetBookmark.embedding || targetBookmark.embedding.length === 0) {
+    return [];
+  }
+
+  const results = allBookmarks
+    .filter(b => b.id !== bookmarkId && b.embedding && b.embedding.length > 0)
+    .map(bookmark => ({
+      ...bookmark,
+      similarity: cosineSimilarity(targetBookmark.embedding!, bookmark.embedding!),
     }))
     .sort((a, b) => b.similarity - a.similarity)
     .slice(0, topK);
