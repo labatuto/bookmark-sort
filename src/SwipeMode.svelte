@@ -131,13 +131,15 @@
 
   function completeSwipe(direction: 'left' | 'right') {
     swipeAnimating = true;
+    const currentBookmark = $filteredBookmarks[swipeIndex];
     swipeDeltaX = direction === 'right' ? window.innerWidth + 100 : -(window.innerWidth + 100);
 
-    setTimeout(async () => {
-      if (direction === 'right') {
-        await sendToInstapaper();
-      }
+    setTimeout(() => {
       finishAdvance();
+      // Fire API call in background after advancing
+      if (direction === 'right' && currentBookmark) {
+        sendToInstapaper(currentBookmark);
+      }
     }, 250);
   }
 
@@ -150,15 +152,12 @@
     }
   }
 
-  async function sendToInstapaper() {
-    const bookmark = $filteredBookmarks[swipeIndex];
+  async function sendToInstapaper(bookmark?: typeof $filteredBookmarks[0]) {
+    if (!bookmark) bookmark = $filteredBookmarks[swipeIndex];
     if (!bookmark) return;
 
     const dest = $destinations.find(d => d.type === 'instapaper');
-    if (!dest) {
-      showStatus('No Instapaper destination configured.');
-      return;
-    }
+    if (!dest) return; // silently skip if no instapaper configured
 
     try {
       await api.routeBookmarksBulk([bookmark.id], dest.id);
@@ -180,15 +179,20 @@
     const bookmark = $filteredBookmarks[swipeIndex];
     if (!bookmark || swipeAnimating) return;
 
+    // Optimistic: remove from local state immediately
+    bookmarks.update(list => list.filter(b => b.id !== bookmark.id));
+    showStatus('Deleted & queued for unbookmark');
+    finishAdvance();
+
+    // Fire API in background
     try {
       await api.deleteBookmarks([bookmark.id], true);
-      showStatus('Deleted & queued for unbookmark');
-      const data = await api.fetchBookmarks();
-      bookmarks.set(data);
-      finishAdvance();
     } catch (err) {
       console.error('Delete failed:', err);
       showStatus('Failed to delete');
+      // Refresh to restore state on failure
+      const data = await api.fetchBookmarks();
+      bookmarks.set(data);
     }
   }
 
@@ -342,6 +346,18 @@
   <div class="swipe-area">
     {#if $filteredBookmarks[swipeIndex]}
       {@const bookmark = $filteredBookmarks[swipeIndex]}
+      <!-- Swipe indicators (outside card so they don't rotate) -->
+      {#if swipeDeltaX > 20}
+        <div class="swipe-indicator right" style="opacity: {Math.min(swipeDeltaX / 100, 1)}">
+          {$destinations.some(d => d.type === 'instapaper') ? 'INSTAPAPER' : 'READ'}
+        </div>
+      {/if}
+      {#if swipeDeltaX < -20}
+        <div class="swipe-indicator left" style="opacity: {Math.min(Math.abs(swipeDeltaX) / 100, 1)}">
+          SKIP
+        </div>
+      {/if}
+
       <div
         class="swipe-card-wrapper"
         ontouchstart={onTouchStart}
@@ -351,18 +367,6 @@
         tabindex="0"
         style="transform: translateX({swipeDeltaX}px) rotate({swipeDeltaX * 0.03}deg); {swipeAnimating ? 'transition: transform 250ms ease-out;' : ''}"
       >
-        <!-- Swipe indicators -->
-        {#if swipeDeltaX > 20}
-          <div class="swipe-indicator right" style="opacity: {Math.min(swipeDeltaX / 100, 1)}">
-            INSTAPAPER
-          </div>
-        {/if}
-        {#if swipeDeltaX < -20}
-          <div class="swipe-indicator left" style="opacity: {Math.min(Math.abs(swipeDeltaX) / 100, 1)}">
-            SKIP
-          </div>
-        {/if}
-
         <div class="swipe-card">
           <!-- Header -->
           <div class="flex items-center gap-2 mb-2">

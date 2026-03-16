@@ -65,18 +65,6 @@
   // Loading state for initial load
   let isLoading = true;
 
-  // X/Twitter state
-  let xStatus: { configured: boolean; connected: boolean; username: string | null } = {
-    configured: false,
-    connected: false,
-    username: null,
-  };
-
-  // Notion state
-  let notionStatus: { configured: boolean; connected: boolean; botName?: string } = {
-    configured: false,
-    connected: false,
-  };
   let notionSearchQuery = '';
   let notionSearchResults: { id: string; title: string; url: string }[] = [];
   let isSearchingNotion = false;
@@ -101,11 +89,7 @@
       destinations.set(destData);
 
       // Load status checks in parallel (non-blocking)
-      Promise.all([
-        loadGoogleAccounts(),
-        loadXStatus(),
-        loadNotionStatus(),
-      ]).catch(err => console.error('Failed to load status:', err));
+      loadGoogleAccounts().catch(err => console.error('Failed to load accounts:', err));
     } catch (err) {
       console.error('Failed to load data:', err);
     } finally {
@@ -194,22 +178,6 @@
       similarBookmarks = [];
     } finally {
       isLoadingSimilar = false;
-    }
-  }
-
-  async function loadXStatus() {
-    try {
-      xStatus = await api.fetchXStatus();
-    } catch (err) {
-      console.error('Failed to load X status:', err);
-    }
-  }
-
-  async function loadNotionStatus() {
-    try {
-      notionStatus = await api.fetchNotionStatus();
-    } catch (err) {
-      console.error('Failed to load Notion status:', err);
     }
   }
 
@@ -484,7 +452,7 @@
   $: currentFilterLabel = $filters.folder || ($filters.status !== 'all' ? ($filters.status === 'pending' ? 'Not routed' : 'Routed') : 'All bookmarks');
 </script>
 
-<div class="app-container">
+<div class="app-container" class:swipe-fullscreen={viewMode === 'swipe'}>
   <!-- Loading Overlay -->
   {#if isLoading}
     <div class="loading-overlay">
@@ -513,6 +481,7 @@
     </div>
   </header>
 
+  {#if viewMode === 'list'}
   <!-- View Mode Toggle -->
   <div class="view-toggle-bar">
     <button
@@ -606,6 +575,7 @@
       <span class="context-folder">in {$filters.folder}</span>
     {/if}
   </div>
+  {/if}
 
   <!-- Main Content -->
   <main class="main-content">
@@ -818,23 +788,6 @@
       <div class="modal" role="document" onclick={(e) => e.stopPropagation()}>
         <h2 class="modal-title">Settings</h2>
 
-        <h3 class="modal-section-title">Connected Accounts</h3>
-        <ul class="settings-list">
-          {#each googleAccounts as account}
-            <li class="settings-item connected">✓ Google: {account.email}</li>
-          {/each}
-          {#if xStatus.connected}
-            <li class="settings-item connected">✓ X: @{xStatus.username}</li>
-          {:else}
-            <li class="settings-item">X: Not connected</li>
-          {/if}
-          {#if notionStatus.connected}
-            <li class="settings-item connected">✓ Notion: {notionStatus.botName || 'Connected'}</li>
-          {:else}
-            <li class="settings-item">Notion: Not connected</li>
-          {/if}
-        </ul>
-
         <h3 class="modal-section-title">Destinations</h3>
         {#if $destinations.filter(d => d.type !== 'x' && d.type !== 'google').length === 0}
           <p class="settings-empty">No saved destinations.</p>
@@ -964,6 +917,16 @@
     padding-bottom: env(safe-area-inset-bottom);
   }
 
+  .app-container.swipe-fullscreen {
+    height: 100vh;
+    height: 100dvh;
+    min-height: 0;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    padding-bottom: 0;
+  }
+
   /* ===== Loading ===== */
   .loading-overlay {
     position: fixed;
@@ -1004,6 +967,7 @@
     position: sticky;
     top: 0;
     z-index: 50;
+    flex-shrink: 0;
   }
 
   .header-content {
@@ -1199,6 +1163,13 @@
   /* ===== Main Content ===== */
   .main-content {
     padding-bottom: 100px;
+  }
+
+  .swipe-fullscreen .main-content {
+    flex: 1;
+    min-height: 0;
+    padding-bottom: 0;
+    overflow: hidden;
   }
 
   /* ===== Shared Tweet Styles ===== */
@@ -1671,11 +1642,6 @@
     display: flex;
     justify-content: space-between;
     align-items: center;
-  }
-
-  .settings-item.connected {
-    background: var(--success-light);
-    color: #065f46;
   }
 
   .settings-remove {
