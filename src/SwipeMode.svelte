@@ -134,14 +134,14 @@
 
   function completeSwipe(direction: 'left' | 'right') {
     swipeAnimating = true;
-    const priorId = $filteredBookmarks[swipeIndex]?.id;
+    const bookmark = $filteredBookmarks[swipeIndex];
     swipeDeltaX = direction === 'right' ? window.innerWidth + 100 : -(window.innerWidth + 100);
 
     setTimeout(async () => {
-      if (direction === 'right') {
-        await sendToInstapaper();
+      if (direction === 'right' && bookmark) {
+        await sendToInstapaperDirect(bookmark);
       }
-      finishAdvance(priorId);
+      finishAdvance(bookmark?.id);
     }, 250);
   }
 
@@ -153,22 +153,23 @@
     if (priorBookmarkId && list[swipeIndex]?.id === priorBookmarkId) {
       swipeIndex++;
     }
-    // In shuffle mode, pick a random index
-    if (shuffleMode && list.length > 1) {
+    // In shuffle mode, pick a random index from remaining items
+    if (shuffleMode && list.length > 1 && swipeIndex < list.length) {
       let next: number;
       do {
         next = Math.floor(Math.random() * list.length);
-      } while (next === swipeIndex && list.length > 1);
+      } while (next === swipeIndex);
       swipeIndex = next;
     }
-    // Clamp to valid range
-    if (list.length > 0 && swipeIndex >= list.length) {
-      swipeIndex = list.length - 1;
+    // Let swipeIndex go past the end — the template shows "All caught up" when
+    // $filteredBookmarks[swipeIndex] is undefined, which is the correct behavior
+    // for reaching the end of the list. Only clamp to 0 for empty lists.
+    if (list.length === 0) {
+      swipeIndex = 0;
     }
   }
 
-  async function sendToInstapaper() {
-    const bookmark = $filteredBookmarks[swipeIndex];
+  async function sendToInstapaperDirect(bookmark: any) {
     if (!bookmark) return;
 
     const dest = $destinations.find(d => d.type === 'instapaper');
