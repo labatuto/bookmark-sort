@@ -15,6 +15,9 @@
   let swipeAnimating = $state(false);
   let dataReady = $state(false);
 
+  // Shuffle mode
+  let shuffleMode = $state(false);
+
   // Bottom sheet panels
   let showDocPanel = $state(false);
   let showNotionPanel = $state(false);
@@ -131,27 +134,42 @@
 
   function completeSwipe(direction: 'left' | 'right') {
     swipeAnimating = true;
+    const bookmark = $filteredBookmarks[swipeIndex];
     swipeDeltaX = direction === 'right' ? window.innerWidth + 100 : -(window.innerWidth + 100);
 
     setTimeout(async () => {
-      if (direction === 'right') {
-        await sendToInstapaper();
+      if (direction === 'right' && bookmark) {
+        await sendToInstapaperDirect(bookmark);
       }
-      finishAdvance();
+      finishAdvance(bookmark?.id);
     }, 250);
   }
 
-  function finishAdvance() {
+  function finishAdvance(priorBookmarkId?: string) {
     swipeDeltaX = 0;
     swipeAnimating = false;
     const list = $filteredBookmarks;
-    if (swipeIndex >= list.length && list.length > 0) {
-      swipeIndex = list.length - 1;
+    // Advance past the bookmark if it's still in the list (wasn't removed by the action)
+    if (priorBookmarkId && list[swipeIndex]?.id === priorBookmarkId) {
+      swipeIndex++;
+    }
+    // In shuffle mode, pick a random index from remaining items
+    if (shuffleMode && list.length > 1 && swipeIndex < list.length) {
+      let next: number;
+      do {
+        next = Math.floor(Math.random() * list.length);
+      } while (next === swipeIndex);
+      swipeIndex = next;
+    }
+    // Let swipeIndex go past the end — the template shows "All caught up" when
+    // $filteredBookmarks[swipeIndex] is undefined, which is the correct behavior
+    // for reaching the end of the list. Only clamp to 0 for empty lists.
+    if (list.length === 0) {
+      swipeIndex = 0;
     }
   }
 
-  async function sendToInstapaper() {
-    const bookmark = $filteredBookmarks[swipeIndex];
+  async function sendToInstapaperDirect(bookmark: any) {
     if (!bookmark) return;
 
     const dest = $destinations.find(d => d.type === 'instapaper');
@@ -185,7 +203,7 @@
       showStatus('Deleted & queued for unbookmark');
       const data = await api.fetchBookmarks();
       bookmarks.set(data);
-      finishAdvance();
+      finishAdvance(bookmark.id);
     } catch (err) {
       console.error('Delete failed:', err);
       showStatus('Failed to delete');
@@ -230,7 +248,7 @@
       docResults = [];
       const data = await api.fetchBookmarks();
       bookmarks.set(data);
-      finishAdvance();
+      finishAdvance(bookmark.id);
     } catch (err) {
       console.error('Send to doc failed:', err);
       showStatus('Failed to send to doc');
@@ -274,7 +292,7 @@
       notionResults = [];
       const data = await api.fetchBookmarks();
       bookmarks.set(data);
-      finishAdvance();
+      finishAdvance(bookmark.id);
     } catch (err) {
       console.error('Send to Notion failed:', err);
       showStatus('Failed to send to Notion');
@@ -335,6 +353,16 @@
       <option value="pending">Not routed</option>
       <option value="routed">Routed</option>
     </select>
+    <button
+      onclick={() => { shuffleMode = !shuffleMode; if (shuffleMode) { const list = $filteredBookmarks; if (list.length > 1) { swipeIndex = Math.floor(Math.random() * list.length); } } }}
+      class="mode-toggle"
+      style={shuffleMode ? 'background: var(--accent); color: white;' : ''}
+      title={shuffleMode ? 'Shuffle: ON' : 'Shuffle: OFF'}
+    >
+      <svg class="w-4 h-4 inline-block" fill="none" stroke="currentColor" viewBox="0 0 24 24" style="vertical-align: middle;">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M16 3h5v5M4 20L21 3M21 16v5h-5M15 15l6 6M4 4l5 5"/>
+      </svg>
+    </button>
     <button onclick={onShowImport} class="mode-toggle">Import</button>
   </div>
 
