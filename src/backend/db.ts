@@ -5,7 +5,10 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DB_PATH = path.join(__dirname, '../../data/bookmarks.db');
+// In production (Railway), use the persistent volume mount at /data.
+// Locally, fall back to the relative data/ directory.
+const DB_PATH = process.env.DATABASE_PATH
+  || (process.env.NODE_ENV === 'production' ? '/data/bookmarks.db' : path.join(__dirname, '../../data/bookmarks.db'));
 
 // Use Turso if configured, otherwise fall back to local SQLite
 const USE_TURSO = !!(process.env.TURSO_DATABASE_URL && process.env.TURSO_AUTH_TOKEN);
