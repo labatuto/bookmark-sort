@@ -10,7 +10,7 @@ Your current pain points:
 3. Sending to Instapaper, Notion, Google Drive requires opening each service
 4. Unbookmarking after processing is tedious
 
-The solution: A local-first web app that imports your ArchivlyX exports, embeds them for semantic search, and lets you route them to any destination with a few clicks or automated rules.
+The solution: A web app (deployed on Railway) that imports your ArchivlyX exports, embeds them for semantic search, and lets you route them to any destination with a few clicks or automated rules.
 
 ---
 
@@ -65,11 +65,10 @@ The solution: A local-first web app that imports your ArchivlyX exports, embeds 
 
 ### Why This Architecture?
 
-**Local-First Design**: The entire bookmark corpus lives in SQLite on your machine. No cloud dependency for the core functionality. This means:
-- You own your data
-- Instant search (no network latency)
-- Works offline once bookmarks are imported and embedded
-- Privacy: tweets never leave your machine except when you explicitly route them
+**SQLite-Based Design**: The entire bookmark corpus lives in SQLite (persistent volume on Railway). This means:
+- You own your data (single-file database, easy to back up)
+- Fast search (SQLite + sqlite-vec, no separate vector DB needed)
+- Privacy: data stays in your Railway instance, not shared with third parties
 
 **Svelte + Vite Frontend**:
 - Smallest bundle size of major frameworks (matters for a "lean, sleek interface")
@@ -565,8 +564,7 @@ CREATE TABLE destinations (
 ## Cost Analysis
 
 ### One-Time Setup
-- Domain (optional): ~$12/year
-- None required if running locally
+- Railway deployment (free tier or ~$5/month for persistent volume)
 
 ### Recurring Costs
 
@@ -584,10 +582,10 @@ CREATE TABLE destinations (
 ## Security Considerations
 
 1. **OAuth tokens**: Store encrypted in SQLite, never log
-2. **API keys**: Environment variables, not hardcoded
-3. **Local-first**: Tweets stay on your machine
+2. **API keys**: Environment variables (Railway dashboard), not hardcoded
+3. **Data isolation**: Tweets stay in your Railway instance
 4. **No telemetry**: This is a personal tool, no analytics
-5. **HTTPS for OAuth**: Use localhost tunnel during development
+5. **HTTPS**: Provided by Railway in production; use ngrok for local dev
 
 ---
 

@@ -114,6 +114,24 @@ interface RuleCondition {
 }
 ```
 
+## Deployment
+
+**Production**: https://bookmark-sort-production.up.railway.app/
+
+Deployed on **Railway** with:
+- Dockerfile-based builds (`node:20-slim`)
+- Persistent volume at `/data` for SQLite database
+- Health check at `/api/health`
+- Environment variables managed in Railway dashboard
+
+### Docker
+
+The app is containerized via `Dockerfile`. Key details:
+- Installs native build deps (python3, make, g++) for `better-sqlite3`
+- Skips Puppeteer browser download (`PUPPETEER_SKIP_DOWNLOAD=true`)
+- Exposes port 3001
+- Entry: `node --import tsx src/backend/server.ts`
+
 ## Common Commands
 
 ```bash
@@ -126,9 +144,8 @@ npm run dev:all          # Start both concurrently
 npm run build            # Build for production
 npm run preview          # Preview production build
 
-# Production / Mobile Access
+# Production
 npm run start            # Start production server (serves built frontend)
-./start-mobile.sh        # Build + start server + ngrok tunnel for mobile
 
 # Type checking
 npm run check            # Run svelte-check and TypeScript
@@ -138,20 +155,14 @@ npm run check            # Run svelte-check and TypeScript
 
 The app is a PWA (Progressive Web App) that can be installed on your phone:
 
-1. **First time setup** (one time):
-   ```bash
-   ngrok config add-authtoken YOUR_TOKEN  # Get token at https://dashboard.ngrok.com
-   ```
+1. Open https://bookmark-sort-production.up.railway.app/ on your phone
+2. Tap "Add to Home Screen" (Safari) or "Install" (Chrome)
+3. Use like a native app
 
-2. **Start mobile server**:
-   ```bash
-   ./start-mobile.sh
-   ```
-
-3. **On your phone**:
-   - Open the ngrok URL shown in terminal
-   - Tap "Add to Home Screen" (Safari) or "Install" (Chrome)
-   - Use like a native app
+For **local development** mobile access, use ngrok:
+```bash
+./start-mobile.sh        # Build + start server + ngrok tunnel
+```
 
 ## API Rate Limits to Respect
 
@@ -166,10 +177,12 @@ The app is a PWA (Progressive Web App) that can be installed on your phone:
 
 ## Environment Variables
 
+Set in Railway dashboard for production, `.env` locally.
+
 ```env
 # Required
-DATABASE_URL=./data/bookmarks.db
-EMBEDDING_PROVIDER=openai        # or 'voyage'
+DATABASE_PATH=./data/bookmarks.db  # Production (Railway): /data/bookmarks.db
+EMBEDDING_PROVIDER=openai           # or 'voyage'
 
 # OpenAI (if using)
 OPENAI_API_KEY=sk-...
@@ -215,6 +228,8 @@ bookmark-sort/
 │       └── connectors/
 │           └── instapaper.ts
 ├── data/                   # SQLite database (created at runtime)
+├── Dockerfile              # Production container build
+├── railway.json            # Railway deployment config
 ├── ARCHITECTURE.md         # Detailed architecture proposal
 └── CLAUDE.md               # This file
 ```
@@ -224,5 +239,5 @@ bookmark-sort/
 1. **ArchivlyX has no API** - Must use manual CSV/JSON exports from their extension
 2. **X API requires paid tier** - Basic tier ($200/mo) or usage-based for bookmark access
 3. **Instapaper Full API requires subscription** - Simple API (add-only) is free
-4. **OAuth flows need HTTPS** - Use localhost tunnel (ngrok) for development
+4. **OAuth flows need HTTPS** - Production has HTTPS via Railway; use ngrok for local development
 5. **Embeddings are one-time cost** - Cache aggressively, re-embed only on content change
