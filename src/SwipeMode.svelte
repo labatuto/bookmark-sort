@@ -15,8 +15,29 @@
   let swipeAnimating = $state(false);
   let dataReady = $state(false);
 
-  // Shuffle mode
+  // Shuffle mode — maintains a shuffled order of indices
   let shuffleMode = $state(false);
+  let shuffledIndices: number[] = $state([]);
+  let shufflePos = $state(0);
+
+  // Fisher-Yates shuffle to build a randomized index order
+  function buildShuffledIndices(length: number) {
+    const indices = Array.from({ length }, (_, i) => i);
+    for (let i = indices.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      [indices[i], indices[j]] = [indices[j], indices[i]];
+    }
+    return indices;
+  }
+
+  function enableShuffle() {
+    const list = $filteredBookmarks;
+    if (list.length > 0) {
+      shuffledIndices = buildShuffledIndices(list.length);
+      shufflePos = 0;
+      swipeIndex = shuffledIndices[0];
+    }
+  }
 
   // Bottom sheet panels
   let showDocPanel = $state(false);
@@ -108,6 +129,7 @@
     }
 
     if (isSwipeGesture) {
+      e.preventDefault(); // Prevent any vertical scroll during horizontal swipe
       swipeDeltaX = deltaX;
     }
   }
@@ -133,13 +155,31 @@
   }
 
   function completeSwipe(direction: 'left' | 'right') {
-    swipeAnimating = true;
     const bookmark = $filteredBookmarks[swipeIndex];
-    swipeDeltaX = direction === 'right' ? window.innerWidth + 100 : -(window.innerWidth + 100);
+
+    if (direction === 'left' && bookmark) {
+      // Left swipe = snap card back and open folder picker
+      swipeDeltaX = 0;
+      closeAllPanels();
+      showFolderPanel = true;
+      return; // Don't advance — user picks a folder first
+    }
+
+    // Right swipe = delete & unbookmark (animate off-screen)
+    swipeAnimating = true;
+    swipeDeltaX = window.innerWidth + 100;
 
     setTimeout(async () => {
-      if (direction === 'right' && bookmark) {
-        await sendToInstapaperDirect(bookmark);
+      if (bookmark) {
+        try {
+          await api.deleteBookmarks([bookmark.id], true);
+          showStatus('Deleted & queued for unbookmark');
+          const data = await api.fetchBookmarks();
+          bookmarks.set(data);
+        } catch (err) {
+          console.error('Delete failed:', err);
+          showStatus('Failed to delete');
+        }
       }
       finishAdvance(bookmark?.id);
     }, 250);
@@ -149,21 +189,33 @@
     swipeDeltaX = 0;
     swipeAnimating = false;
     const list = $filteredBookmarks;
-    // Advance past the bookmark if it's still in the list (wasn't removed by the action)
-    if (priorBookmarkId && list[swipeIndex]?.id === priorBookmarkId) {
-      swipeIndex++;
+
+    if (shuffleMode) {
+      // In shuffle mode, advance through the pre-shuffled order
+      // If the list size changed (bookmark was deleted), rebuild the shuffle
+      if (shuffledIndices.length !== list.length) {
+        shuffledIndices = buildShuffledIndices(list.length);
+        shufflePos = 0;
+      } else {
+        shufflePos++;
+      }
+      if (shufflePos < shuffledIndices.length && list.length > 0) {
+        swipeIndex = shuffledIndices[shufflePos];
+        // Clamp in case index is out of bounds after deletions
+        if (swipeIndex >= list.length) swipeIndex = swipeIndex % list.length;
+      } else if (list.length > 0) {
+        // Exhausted the shuffle — reshuffle for another pass
+        shuffledIndices = buildShuffledIndices(list.length);
+        shufflePos = 0;
+        swipeIndex = shuffledIndices[0];
+      }
+    } else {
+      // Sequential mode: advance past the bookmark if it's still in the list
+      if (priorBookmarkId && list[swipeIndex]?.id === priorBookmarkId) {
+        swipeIndex++;
+      }
     }
-    // In shuffle mode, pick a random index from remaining items
-    if (shuffleMode && list.length > 1 && swipeIndex < list.length) {
-      let next: number;
-      do {
-        next = Math.floor(Math.random() * list.length);
-      } while (next === swipeIndex);
-      swipeIndex = next;
-    }
-    // Let swipeIndex go past the end — the template shows "All caught up" when
-    // $filteredBookmarks[swipeIndex] is undefined, which is the correct behavior
-    // for reaching the end of the list. Only clamp to 0 for empty lists.
+
     if (list.length === 0) {
       swipeIndex = 0;
     }
@@ -191,23 +243,13 @@
 
   function skip() {
     if (swipeAnimating) return;
-    completeSwipe('left');
-  }
-
-  async function deleteBookmark() {
+    // Skip just advances to next without any action
     const bookmark = $filteredBookmarks[swipeIndex];
-    if (!bookmark || swipeAnimating) return;
-
-    try {
-      await api.deleteBookmarks([bookmark.id], true);
-      showStatus('Deleted & queued for unbookmark');
-      const data = await api.fetchBookmarks();
-      bookmarks.set(data);
-      finishAdvance(bookmark.id);
-    } catch (err) {
-      console.error('Delete failed:', err);
-      showStatus('Failed to delete');
-    }
+    swipeAnimating = true;
+    swipeDeltaX = -(window.innerWidth + 100);
+    setTimeout(() => {
+      finishAdvance(bookmark?.id);
+    }, 250);
   }
 
   // Doc search
@@ -310,6 +352,8 @@
       showFolderPanel = false;
       const data = await api.fetchBookmarks();
       bookmarks.set(data);
+      // Advance to next bookmark after categorizing
+      finishAdvance(bookmark.id);
     } catch (err) {
       console.error('Move to folder failed:', err);
       showStatus('Failed to move to folder');
@@ -333,12 +377,16 @@
   <!-- Toolbar -->
   <div class="swipe-toolbar">
     <span class="swipe-progress">
-      {$filteredBookmarks.length > 0 ? Math.min(swipeIndex + 1, $filteredBookmarks.length) : 0} / {$filteredBookmarks.length}
+      {#if shuffleMode}
+        {shufflePos + 1} / {$filteredBookmarks.length}
+      {:else}
+        {$filteredBookmarks.length > 0 ? Math.min(swipeIndex + 1, $filteredBookmarks.length) : 0} / {$filteredBookmarks.length}
+      {/if}
     </span>
     <div class="flex-1"></div>
     <select
       value={$filters.folder || ''}
-      onchange={(e) => { filters.update(f => ({ ...f, folder: (e.target as HTMLSelectElement).value || null })); swipeIndex = 0; }}
+      onchange={(e) => { filters.update(f => ({ ...f, folder: (e.target as HTMLSelectElement).value || null })); if (shuffleMode) { setTimeout(enableShuffle, 0); } else { swipeIndex = 0; } }}
     >
       <option value="">All Folders</option>
       {#each $folders as folder}
@@ -347,14 +395,14 @@
     </select>
     <select
       value={$filters.status}
-      onchange={(e) => { filters.update(f => ({ ...f, status: (e.target as HTMLSelectElement).value as any })); swipeIndex = 0; }}
+      onchange={(e) => { filters.update(f => ({ ...f, status: (e.target as HTMLSelectElement).value as any })); if (shuffleMode) { setTimeout(enableShuffle, 0); } else { swipeIndex = 0; } }}
     >
       <option value="all">All</option>
       <option value="pending">Not routed</option>
       <option value="routed">Routed</option>
     </select>
     <button
-      onclick={() => { shuffleMode = !shuffleMode; if (shuffleMode) { const list = $filteredBookmarks; if (list.length > 1) { swipeIndex = Math.floor(Math.random() * list.length); } } }}
+      onclick={() => { shuffleMode = !shuffleMode; if (shuffleMode) { enableShuffle(); } else { swipeIndex = 0; } }}
       class="mode-toggle"
       style={shuffleMode ? 'background: var(--accent); color: white;' : ''}
       title={shuffleMode ? 'Shuffle: ON' : 'Shuffle: OFF'}
@@ -377,17 +425,17 @@
         ontouchend={onTouchEnd}
         role="button"
         tabindex="0"
-        style="transform: translateX({swipeDeltaX}px) rotate({swipeDeltaX * 0.03}deg); {swipeAnimating ? 'transition: transform 250ms ease-out;' : ''}"
+        style="transform: translateX({swipeDeltaX}px) rotate({swipeDeltaX * 0.03}deg); {swipeAnimating ? 'transition: transform 250ms ease-out;' : ''}touch-action: none;"
       >
         <!-- Swipe indicators -->
         {#if swipeDeltaX > 20}
-          <div class="swipe-indicator right" style="opacity: {Math.min(swipeDeltaX / 100, 1)}">
-            INSTAPAPER
+          <div class="swipe-indicator right delete" style="opacity: {Math.min(swipeDeltaX / 100, 1)}">
+            DELETE
           </div>
         {/if}
         {#if swipeDeltaX < -20}
-          <div class="swipe-indicator left" style="opacity: {Math.min(Math.abs(swipeDeltaX) / 100, 1)}">
-            SKIP
+          <div class="swipe-indicator left categorize" style="opacity: {Math.min(Math.abs(swipeDeltaX) / 100, 1)}">
+            CATEGORIZE
           </div>
         {/if}
 
@@ -411,7 +459,7 @@
           {/if}
 
           <!-- Text -->
-          <p class="text-sm leading-relaxed whitespace-pre-wrap" style="color: var(--text-primary);">{bookmark.text}</p>
+          <p class="text-sm leading-relaxed whitespace-pre-wrap swipe-card-text" style="color: var(--text-primary);">{bookmark.text}</p>
 
           <!-- Quoted Tweet -->
           {#if bookmark.quoted_post_url}
@@ -493,17 +541,17 @@
     {/if}
   </div>
 
-  <!-- Action Buttons -->
+  <!-- Action Buttons — swipe right=delete, left=categorize; bottom bar has the rest -->
   {#if $filteredBookmarks[swipeIndex]}
     <div class="swipe-actions">
       <button class="swipe-action-btn" onclick={skip} disabled={swipeAnimating}>
         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/>
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 5l7 7-7 7M5 5l7 7-7 7"/>
         </svg>
         <span>Skip</span>
       </button>
       {#if $destinations.some(d => d.type === 'instapaper')}
-        <button class="swipe-action-btn primary" onclick={() => completeSwipe('right')} disabled={swipeAnimating}>
+        <button class="swipe-action-btn primary" onclick={() => { const bm = $filteredBookmarks[swipeIndex]; if (bm) sendToInstapaperDirect(bm).then(() => finishAdvance(bm.id)); }} disabled={swipeAnimating}>
           <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/>
           </svg>
@@ -531,12 +579,6 @@
           <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 7v10a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-6l-2-2H5a2 2 0 00-2 2z"/>
         </svg>
         <span>Folder</span>
-      </button>
-      <button class="swipe-action-btn danger" onclick={deleteBookmark} disabled={swipeAnimating}>
-        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"/>
-        </svg>
-        <span>Delete</span>
       </button>
     </div>
   {/if}

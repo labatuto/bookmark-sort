@@ -333,8 +333,16 @@ input[type="text"]:focus, select:focus, textarea:focus {
   display: flex;
   flex-direction: column;
   height: calc(100vh - 53px);
+  height: calc(100dvh - 53px);
   overflow: hidden;
   background: var(--bg-primary);
+  position: fixed;
+  top: 53px;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  touch-action: none;
+  overscroll-behavior: none;
 }
 
 .swipe-toolbar {
@@ -361,20 +369,25 @@ input[type="text"]:focus, select:focus, textarea:focus {
 
 .swipe-area {
   flex: 1;
+  min-height: 0;
   position: relative;
   overflow: hidden;
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 16px;
+  padding: 12px 16px;
+  touch-action: none;
+  overscroll-behavior: none;
 }
 
 .swipe-card-wrapper {
   width: 100%;
   max-width: 500px;
   position: relative;
-  touch-action: pan-y;
+  touch-action: none;
   will-change: transform;
+  -webkit-user-select: none;
+  user-select: none;
 }
 
 .swipe-card {
@@ -383,9 +396,15 @@ input[type="text"]:focus, select:focus, textarea:focus {
   border-radius: 12px;
   box-shadow: var(--shadow-md);
   padding: 16px;
-  overflow-y: auto;
-  max-height: calc(100vh - 220px);
-  -webkit-overflow-scrolling: touch;
+  overflow: hidden;
+  max-height: calc(100dvh - 200px);
+}
+
+.swipe-card-text {
+  display: -webkit-box;
+  -webkit-line-clamp: 8;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .swipe-indicator {
@@ -400,18 +419,18 @@ input[type="text"]:focus, select:focus, textarea:focus {
   pointer-events: none;
 }
 
-.swipe-indicator.right {
+.swipe-indicator.right.delete {
   right: 12px;
-  background: var(--success-light);
-  color: #065f46;
-  border: 2px solid var(--success);
+  background: var(--danger-light);
+  color: var(--danger);
+  border: 2px solid var(--danger);
 }
 
-.swipe-indicator.left {
+.swipe-indicator.left.categorize {
   left: 12px;
-  background: var(--bg-hover);
-  color: var(--text-muted);
-  border: 2px solid var(--border-medium);
+  background: var(--accent-light);
+  color: var(--accent-hover);
+  border: 2px solid var(--accent);
 }
 
 /* Action buttons row */
@@ -532,19 +551,31 @@ input[type="text"]:focus, select:focus, textarea:focus {
 }
 
 @media (max-width: 768px) {
+  .swipe-toolbar {
+    padding: 6px 12px;
+    gap: 6px;
+  }
+
   .swipe-toolbar select {
-    font-size: 14px;
-    padding: 6px 8px;
+    font-size: 13px;
+    padding: 4px 6px;
   }
 
   .swipe-action-btn {
     min-width: 48px;
-    padding: 8px 6px;
+    padding: 6px 6px;
     font-size: 10px;
   }
 
   .swipe-card {
-    max-height: calc(100vh - 240px);
+    max-height: calc(100dvh - 210px);
+    padding: 12px;
+  }
+
+  .swipe-actions {
+    padding: 8px 12px;
+    padding-bottom: max(8px, env(safe-area-inset-bottom));
+    gap: 4px;
   }
 
   .bottom-sheet {
@@ -552,8 +583,8 @@ input[type="text"]:focus, select:focus, textarea:focus {
   }
 
   .mode-toggle {
-    font-size: 14px;
-    padding: 10px 12px;
+    font-size: 13px;
+    padding: 8px 10px;
   }
 }
 
