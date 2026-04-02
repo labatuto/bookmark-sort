@@ -155,13 +155,22 @@
   }
 
   function completeSwipe(direction: 'left' | 'right') {
-    swipeAnimating = true;
     const bookmark = $filteredBookmarks[swipeIndex];
-    swipeDeltaX = direction === 'right' ? window.innerWidth + 100 : -(window.innerWidth + 100);
+
+    if (direction === 'left' && bookmark) {
+      // Left swipe = snap card back and open folder picker
+      swipeDeltaX = 0;
+      closeAllPanels();
+      showFolderPanel = true;
+      return; // Don't advance — user picks a folder first
+    }
+
+    // Right swipe = delete & unbookmark (animate off-screen)
+    swipeAnimating = true;
+    swipeDeltaX = window.innerWidth + 100;
 
     setTimeout(async () => {
-      if (direction === 'right' && bookmark) {
-        // Right swipe = delete & unbookmark
+      if (bookmark) {
         try {
           await api.deleteBookmarks([bookmark.id], true);
           showStatus('Deleted & queued for unbookmark');
@@ -171,13 +180,6 @@
           console.error('Delete failed:', err);
           showStatus('Failed to delete');
         }
-      } else if (direction === 'left' && bookmark) {
-        // Left swipe = open folder picker to categorize
-        swipeDeltaX = 0;
-        swipeAnimating = false;
-        closeAllPanels();
-        showFolderPanel = true;
-        return; // Don't advance — user picks a folder first
       }
       finishAdvance(bookmark?.id);
     }, 250);
@@ -248,22 +250,6 @@
     setTimeout(() => {
       finishAdvance(bookmark?.id);
     }, 250);
-  }
-
-  async function deleteBookmark() {
-    const bookmark = $filteredBookmarks[swipeIndex];
-    if (!bookmark || swipeAnimating) return;
-
-    try {
-      await api.deleteBookmarks([bookmark.id], true);
-      showStatus('Deleted & queued for unbookmark');
-      const data = await api.fetchBookmarks();
-      bookmarks.set(data);
-      finishAdvance(bookmark.id);
-    } catch (err) {
-      console.error('Delete failed:', err);
-      showStatus('Failed to delete');
-    }
   }
 
   // Doc search
@@ -391,12 +377,16 @@
   <!-- Toolbar -->
   <div class="swipe-toolbar">
     <span class="swipe-progress">
-      {$filteredBookmarks.length > 0 ? Math.min(swipeIndex + 1, $filteredBookmarks.length) : 0} / {$filteredBookmarks.length}
+      {#if shuffleMode}
+        {shufflePos + 1} / {$filteredBookmarks.length}
+      {:else}
+        {$filteredBookmarks.length > 0 ? Math.min(swipeIndex + 1, $filteredBookmarks.length) : 0} / {$filteredBookmarks.length}
+      {/if}
     </span>
     <div class="flex-1"></div>
     <select
       value={$filters.folder || ''}
-      onchange={(e) => { filters.update(f => ({ ...f, folder: (e.target as HTMLSelectElement).value || null })); swipeIndex = 0; }}
+      onchange={(e) => { filters.update(f => ({ ...f, folder: (e.target as HTMLSelectElement).value || null })); if (shuffleMode) { setTimeout(enableShuffle, 0); } else { swipeIndex = 0; } }}
     >
       <option value="">All Folders</option>
       {#each $folders as folder}
@@ -405,7 +395,7 @@
     </select>
     <select
       value={$filters.status}
-      onchange={(e) => { filters.update(f => ({ ...f, status: (e.target as HTMLSelectElement).value as any })); swipeIndex = 0; }}
+      onchange={(e) => { filters.update(f => ({ ...f, status: (e.target as HTMLSelectElement).value as any })); if (shuffleMode) { setTimeout(enableShuffle, 0); } else { swipeIndex = 0; } }}
     >
       <option value="all">All</option>
       <option value="pending">Not routed</option>
