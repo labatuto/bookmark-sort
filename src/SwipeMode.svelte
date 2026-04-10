@@ -15,6 +15,15 @@
   let swipeAnimating = $state(false);
   let dataReady = $state(false);
 
+  // Reactive safety net: auto-clamp swipeIndex when the bookmark list changes
+  // This prevents "All caught up" from ever showing when bookmarks exist
+  $effect(() => {
+    const len = $filteredBookmarks.length;
+    if (len > 0 && swipeIndex >= len) {
+      swipeIndex = 0;
+    }
+  });
+
   // Shuffle mode — maintains a shuffled order of indices
   let shuffleMode = $state(false);
   let shuffledIndices: number[] = $state([]);
@@ -181,47 +190,54 @@
           showStatus('Failed to delete');
         }
       }
-      finishAdvance(bookmark?.id);
+      finishAdvance(true); // bookmark was removed from list
     }, 250);
   }
 
-  function finishAdvance(priorBookmarkId?: string) {
+  function finishAdvance(wasRemovedFromList: boolean) {
     swipeDeltaX = 0;
     swipeAnimating = false;
     const list = $filteredBookmarks;
 
+    if (list.length === 0) {
+      swipeIndex = 0;
+      return;
+    }
+
     if (shuffleMode) {
-      // In shuffle mode, advance through the pre-shuffled order
-      // If the list size changed (bookmark was deleted), rebuild the shuffle
+      // If the list size changed, rebuild the shuffle
       if (shuffledIndices.length !== list.length) {
         shuffledIndices = buildShuffledIndices(list.length);
         shufflePos = 0;
       } else {
         shufflePos++;
       }
-      if (shufflePos < shuffledIndices.length && list.length > 0) {
-        swipeIndex = shuffledIndices[shufflePos];
-        // Clamp in case index is out of bounds after deletions
-        if (swipeIndex >= list.length) swipeIndex = swipeIndex % list.length;
-      } else if (list.length > 0) {
-        // Exhausted the shuffle — reshuffle for another pass
+      if (shufflePos < shuffledIndices.length) {
+        swipeIndex = shuffledIndices[shufflePos] % list.length;
+      } else {
+        // Exhausted — reshuffle
         shuffledIndices = buildShuffledIndices(list.length);
         shufflePos = 0;
         swipeIndex = shuffledIndices[0];
       }
     } else {
-      // Sequential mode: advance past the bookmark if it's still in the list
-      if (priorBookmarkId && list[swipeIndex]?.id === priorBookmarkId) {
+      // Sequential mode:
+      // If the bookmark was removed from the filtered list (deleted or moved out
+      // of current filter), the list shifted — stay at same index to show next.
+      // If the bookmark is still in the list, advance past it.
+      if (!wasRemovedFromList) {
         swipeIndex++;
       }
     }
 
-    if (list.length === 0) {
+    // Always clamp to valid bounds
+    if (swipeIndex >= list.length) {
       swipeIndex = 0;
     }
   }
 
-  async function sendToInstapaperDirect(bookmark: any) {
+  async function sendToInstapaperAndAdvance() {
+    const bookmark = $filteredBookmarks[swipeIndex];
     if (!bookmark) return;
 
     const dest = $destinations.find(d => d.type === 'instapaper');
@@ -235,6 +251,8 @@
       showStatus('Sent to Instapaper');
       const data = await api.fetchBookmarks();
       bookmarks.set(data);
+      // Bookmark is still in list (just marked routed), advance past it
+      finishAdvance(false);
     } catch (err) {
       console.error('Instapaper failed:', err);
       showStatus('Failed to send to Instapaper');
@@ -243,12 +261,10 @@
 
   function skip() {
     if (swipeAnimating) return;
-    // Skip just advances to next without any action
-    const bookmark = $filteredBookmarks[swipeIndex];
     swipeAnimating = true;
     swipeDeltaX = -(window.innerWidth + 100);
     setTimeout(() => {
-      finishAdvance(bookmark?.id);
+      finishAdvance(false); // bookmark still in list, advance past it
     }, 250);
   }
 
@@ -290,7 +306,7 @@
       docResults = [];
       const data = await api.fetchBookmarks();
       bookmarks.set(data);
-      finishAdvance(bookmark.id);
+      finishAdvance(false); // bookmark still in list
     } catch (err) {
       console.error('Send to doc failed:', err);
       showStatus('Failed to send to doc');
@@ -334,7 +350,7 @@
       notionResults = [];
       const data = await api.fetchBookmarks();
       bookmarks.set(data);
-      finishAdvance(bookmark.id);
+      finishAdvance(false); // bookmark still in list
     } catch (err) {
       console.error('Send to Notion failed:', err);
       showStatus('Failed to send to Notion');
@@ -345,6 +361,7 @@
   async function moveToFolder(folder: string | null) {
     const bookmark = $filteredBookmarks[swipeIndex];
     if (!bookmark) return;
+    const prevLen = $filteredBookmarks.length;
 
     try {
       await api.moveToFolder([bookmark.id], folder);
@@ -352,8 +369,9 @@
       showFolderPanel = false;
       const data = await api.fetchBookmarks();
       bookmarks.set(data);
-      // Advance to next bookmark after categorizing
-      finishAdvance(bookmark.id);
+      // If the filtered list shrank, the bookmark left the current filter view
+      const wasRemoved = $filteredBookmarks.length < prevLen;
+      finishAdvance(wasRemoved);
     } catch (err) {
       console.error('Move to folder failed:', err);
       showStatus('Failed to move to folder');
@@ -412,6 +430,11 @@
       </svg>
     </button>
     <button onclick={onShowImport} class="mode-toggle">Import</button>
+    <button onclick={onToggleMode} class="mode-toggle" title="Switch to list view">
+      <svg class="w-4 h-4 inline-block" fill="none" stroke="currentColor" viewBox="0 0 24 24" style="vertical-align: middle;">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16"/>
+      </svg>
+    </button>
   </div>
 
   <!-- Swipe Area -->
@@ -541,8 +564,8 @@
     {/if}
   </div>
 
-  <!-- Action Buttons — swipe right=delete, left=categorize; bottom bar has the rest -->
-  {#if $filteredBookmarks[swipeIndex]}
+  <!-- Action Buttons — always visible when bookmarks exist -->
+  {#if $filteredBookmarks.length > 0}
     <div class="swipe-actions">
       <button class="swipe-action-btn" onclick={skip} disabled={swipeAnimating}>
         <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -551,7 +574,7 @@
         <span>Skip</span>
       </button>
       {#if $destinations.some(d => d.type === 'instapaper')}
-        <button class="swipe-action-btn primary" onclick={() => { const bm = $filteredBookmarks[swipeIndex]; if (bm) sendToInstapaperDirect(bm).then(() => finishAdvance(bm.id)); }} disabled={swipeAnimating}>
+        <button class="swipe-action-btn primary" onclick={sendToInstapaperAndAdvance} disabled={swipeAnimating}>
           <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
             <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 6.253v13m0-13C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s3.332.477 4.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.747 0 3.332.477 4.5 1.253v13C19.832 18.477 18.247 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/>
           </svg>

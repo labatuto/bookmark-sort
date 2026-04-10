@@ -409,28 +409,32 @@ input[type="text"]:focus, select:focus, textarea:focus {
 
 .swipe-indicator {
   position: absolute;
-  top: 12px;
-  font-size: 12px;
-  font-weight: 700;
-  letter-spacing: 1px;
-  padding: 6px 12px;
-  border-radius: 6px;
+  top: 50%;
+  transform: translateY(-50%);
+  font-size: 16px;
+  font-weight: 800;
+  letter-spacing: 2px;
+  padding: 10px 18px;
+  border-radius: 8px;
   z-index: 10;
   pointer-events: none;
+  text-transform: uppercase;
 }
 
 .swipe-indicator.right.delete {
-  right: 12px;
-  background: var(--danger-light);
-  color: var(--danger);
-  border: 2px solid var(--danger);
+  right: 16px;
+  background: rgba(239, 68, 68, 0.95);
+  color: white;
+  border: none;
+  box-shadow: 0 2px 12px rgba(239, 68, 68, 0.4);
 }
 
 .swipe-indicator.left.categorize {
-  left: 12px;
-  background: var(--accent-light);
-  color: var(--accent-hover);
-  border: 2px solid var(--accent);
+  left: 16px;
+  background: rgba(59, 130, 246, 0.95);
+  color: white;
+  border: none;
+  box-shadow: 0 2px 12px rgba(59, 130, 246, 0.4);
 }
 
 /* Action buttons row */
