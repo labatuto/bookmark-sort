@@ -94,7 +94,7 @@ app.post('/api/import', async (req, res) => {
 
     if (skipUnfurling) {
       // Fast import without unfurling
-      const result = importBookmarks(content);
+      const result = await importBookmarks(content);
       res.json(result);
     } else {
       // Full import with URL unfurling (slower but gets link titles)

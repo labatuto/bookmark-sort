@@ -20,11 +20,11 @@ export async function updateBookmarkStatus(id: string, status: 'pending' | 'rout
 }
 
 // Import
-export async function importBookmarks(content: string) {
+export async function importBookmarks(content: string, skipUnfurling = true) {
   const res = await fetch(`${API_BASE}/import`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ content }),
+    body: JSON.stringify({ content, skipUnfurling }),
   });
   if (!res.ok) throw new Error(await res.text());
   return res.json();
