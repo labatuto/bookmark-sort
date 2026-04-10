@@ -1,113 +1,24 @@
-import { createClient } from '@libsql/client';
-import type { Client, ResultSet } from '@libsql/client';
 import Database from 'better-sqlite3';
 import path from 'path';
 import { fileURLToPath } from 'url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DB_PATH = path.join(__dirname, '../../data/bookmarks.db');
+const DB_PATH = process.env.DATABASE_PATH || path.join(__dirname, '../../data/bookmarks.db');
 
-// Use Turso if configured, otherwise fall back to local SQLite
-const USE_TURSO = !!(process.env.TURSO_DATABASE_URL && process.env.TURSO_AUTH_TOKEN);
-
-let tursoClient: Client | null = null;
-let localDb: Database.Database | null = null;
+let db: Database.Database | null = null;
 
 // Initialize database connection
 export async function initDb(): Promise<void> {
-  if (USE_TURSO) {
-    console.log('Using Turso cloud database');
-    tursoClient = createClient({
-      url: process.env.TURSO_DATABASE_URL!,
-      authToken: process.env.TURSO_AUTH_TOKEN!,
-    });
-    await initSchemaAsync();
-  } else {
-    console.log('Using local SQLite database');
-    localDb = new Database(DB_PATH);
-    localDb.pragma('journal_mode = WAL');
-    initSchemaSync();
-  }
+  console.log(`Using SQLite database at ${DB_PATH}`);
+  db = new Database(DB_PATH);
+  db.pragma('journal_mode = WAL');
+  initSchema();
 }
 
-// Schema initialization for Turso (async)
-async function initSchemaAsync() {
-  if (!tursoClient) return;
+function initSchema() {
+  if (!db) return;
 
-  await tursoClient.execute(`
-    CREATE TABLE IF NOT EXISTS bookmarks (
-      id TEXT PRIMARY KEY,
-      tweet_id TEXT UNIQUE NOT NULL,
-      author_handle TEXT NOT NULL,
-      author_name TEXT,
-      text TEXT NOT NULL,
-      urls TEXT DEFAULT '[]',
-      media_urls TEXT DEFAULT '[]',
-      created_at TEXT,
-      bookmarked_at TEXT,
-      imported_at TEXT DEFAULT (datetime('now')),
-      tags TEXT DEFAULT '[]',
-      archivly_folder TEXT,
-      quoted_post_url TEXT,
-      link_title TEXT,
-      status TEXT DEFAULT 'pending',
-      embedding TEXT
-    )
-  `);
-
-  await tursoClient.execute(`
-    CREATE TABLE IF NOT EXISTS destinations (
-      id TEXT PRIMARY KEY,
-      type TEXT NOT NULL,
-      name TEXT NOT NULL,
-      config TEXT NOT NULL,
-      created_at TEXT DEFAULT (datetime('now'))
-    )
-  `);
-
-  await tursoClient.execute(`
-    CREATE TABLE IF NOT EXISTS routing_history (
-      id TEXT PRIMARY KEY,
-      bookmark_id TEXT NOT NULL,
-      destination_id TEXT NOT NULL,
-      destination_type TEXT NOT NULL,
-      status TEXT NOT NULL,
-      error_message TEXT,
-      created_at TEXT DEFAULT (datetime('now'))
-    )
-  `);
-
-  await tursoClient.execute(`
-    CREATE TABLE IF NOT EXISTS unbookmark_queue (
-      id TEXT PRIMARY KEY,
-      tweet_id TEXT UNIQUE NOT NULL,
-      bookmark_id TEXT,
-      author_handle TEXT,
-      added_at TEXT DEFAULT (datetime('now'))
-    )
-  `);
-
-  await tursoClient.execute(`
-    CREATE TABLE IF NOT EXISTS cached_tweets (
-      tweet_id TEXT PRIMARY KEY,
-      author_handle TEXT NOT NULL,
-      author_name TEXT,
-      text TEXT NOT NULL,
-      fetched_at TEXT DEFAULT (datetime('now'))
-    )
-  `);
-
-  // Create indexes
-  await tursoClient.execute(`CREATE INDEX IF NOT EXISTS idx_bookmarks_status ON bookmarks(status)`);
-  await tursoClient.execute(`CREATE INDEX IF NOT EXISTS idx_bookmarks_folder ON bookmarks(archivly_folder)`);
-  await tursoClient.execute(`CREATE INDEX IF NOT EXISTS idx_bookmarks_tweet_id ON bookmarks(tweet_id)`);
-}
-
-// Schema initialization for local SQLite (sync)
-function initSchemaSync() {
-  if (!localDb) return;
-
-  localDb.exec(`
+  db.exec(`
     CREATE TABLE IF NOT EXISTS bookmarks (
       id TEXT PRIMARY KEY,
       tweet_id TEXT UNIQUE NOT NULL,
@@ -164,31 +75,33 @@ function initSchemaSync() {
     CREATE INDEX IF NOT EXISTS idx_bookmarks_status ON bookmarks(status);
     CREATE INDEX IF NOT EXISTS idx_bookmarks_folder ON bookmarks(archivly_folder);
     CREATE INDEX IF NOT EXISTS idx_bookmarks_tweet_id ON bookmarks(tweet_id);
+    CREATE INDEX IF NOT EXISTS idx_routing_history_bookmark_id ON routing_history(bookmark_id);
+    CREATE INDEX IF NOT EXISTS idx_routing_history_status ON routing_history(status);
   `);
 
   // Migration: Add quoted_post_url column if it doesn't exist
   try {
-    localDb.exec(`ALTER TABLE bookmarks ADD COLUMN quoted_post_url TEXT`);
+    db.exec(`ALTER TABLE bookmarks ADD COLUMN quoted_post_url TEXT`);
   } catch (e: any) {
     if (!e.message.includes('duplicate column name')) throw e;
   }
 
   // Migration: Add link_title column if it doesn't exist
   try {
-    localDb.exec(`ALTER TABLE bookmarks ADD COLUMN link_title TEXT`);
+    db.exec(`ALTER TABLE bookmarks ADD COLUMN link_title TEXT`);
   } catch (e: any) {
     if (!e.message.includes('duplicate column name')) throw e;
   }
 
   // Migration: Add unique index on tweet_id in unbookmark_queue to prevent duplicates
   try {
-    localDb.exec(`
+    db.exec(`
       DELETE FROM unbookmark_queue
       WHERE id NOT IN (
         SELECT MIN(id) FROM unbookmark_queue GROUP BY tweet_id
       )
     `);
-    localDb.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_unbookmark_queue_tweet_unique ON unbookmark_queue(tweet_id)`);
+    db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_unbookmark_queue_tweet_unique ON unbookmark_queue(tweet_id)`);
   } catch (e: any) {
     if (!e.message.includes('already exists')) {
       console.error('Migration error:', e.message);
@@ -197,10 +110,10 @@ function initSchemaSync() {
 
   // Migration: Remove foreign key from unbookmark_queue
   try {
-    const tableInfo = localDb.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='unbookmark_queue'").get() as any;
+    const tableInfo = db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='unbookmark_queue'").get() as any;
     if (tableInfo?.sql?.includes('FOREIGN KEY')) {
       console.log('Migrating unbookmark_queue to remove foreign key...');
-      localDb.exec(`
+      db.exec(`
         CREATE TABLE IF NOT EXISTS unbookmark_queue_new (
           id TEXT PRIMARY KEY,
           tweet_id TEXT NOT NULL,
@@ -238,7 +151,7 @@ function parseBookmarkRow(row: any) {
     quoted_post_url: row.quoted_post_url,
     link_title: row.link_title,
     status: row.status,
-    embedding: row.embedding ? (typeof row.embedding === 'string' ? JSON.parse(row.embedding) : Array.from(new Float32Array(row.embedding.buffer))) : undefined,
+    embedding: row.embedding ? Array.from(new Float32Array(row.embedding.buffer)) : undefined,
   };
 }
 
@@ -258,96 +171,49 @@ export async function insertBookmark(bookmark: {
   quoted_post_url?: string;
   link_title?: string;
 }) {
+  if (!db) return;
   const urls = JSON.stringify(bookmark.urls || []);
   const media_urls = JSON.stringify(bookmark.media_urls || []);
   const tags = JSON.stringify(bookmark.tags || []);
 
-  if (USE_TURSO && tursoClient) {
-    await tursoClient.execute({
-      sql: `
-        INSERT INTO bookmarks
-        (id, tweet_id, author_handle, author_name, text, urls, media_urls, created_at, bookmarked_at, tags, archivly_folder, quoted_post_url, link_title)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(tweet_id) DO UPDATE SET
-          media_urls = CASE WHEN excluded.media_urls != '[]' THEN excluded.media_urls ELSE media_urls END,
-          urls = CASE WHEN excluded.urls != '[]' THEN excluded.urls ELSE urls END,
-          quoted_post_url = CASE WHEN excluded.quoted_post_url IS NOT NULL THEN excluded.quoted_post_url ELSE quoted_post_url END,
-          link_title = CASE WHEN excluded.link_title IS NOT NULL THEN excluded.link_title ELSE link_title END,
-          archivly_folder = CASE WHEN excluded.archivly_folder IS NOT NULL AND excluded.archivly_folder != 'unsorted' THEN excluded.archivly_folder ELSE archivly_folder END
-      `,
-      args: [
-        bookmark.id,
-        bookmark.tweet_id,
-        bookmark.author_handle,
-        bookmark.author_name || '',
-        bookmark.text,
-        urls,
-        media_urls,
-        bookmark.created_at || null,
-        bookmark.bookmarked_at || null,
-        tags,
-        bookmark.archivly_folder || null,
-        bookmark.quoted_post_url || null,
-        bookmark.link_title || null,
-      ],
-    });
-  } else if (localDb) {
-    const stmt = localDb.prepare(`
-      INSERT INTO bookmarks
-      (id, tweet_id, author_handle, author_name, text, urls, media_urls, created_at, bookmarked_at, tags, archivly_folder, quoted_post_url, link_title)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      ON CONFLICT(tweet_id) DO UPDATE SET
-        media_urls = CASE WHEN excluded.media_urls != '[]' THEN excluded.media_urls ELSE media_urls END,
-        urls = CASE WHEN excluded.urls != '[]' THEN excluded.urls ELSE urls END,
-        quoted_post_url = CASE WHEN excluded.quoted_post_url IS NOT NULL THEN excluded.quoted_post_url ELSE quoted_post_url END,
-        link_title = CASE WHEN excluded.link_title IS NOT NULL THEN excluded.link_title ELSE link_title END,
-        archivly_folder = CASE WHEN excluded.archivly_folder IS NOT NULL AND excluded.archivly_folder != 'unsorted' THEN excluded.archivly_folder ELSE archivly_folder END
-    `);
-    stmt.run(
-      bookmark.id,
-      bookmark.tweet_id,
-      bookmark.author_handle,
-      bookmark.author_name || '',
-      bookmark.text,
-      urls,
-      media_urls,
-      bookmark.created_at || null,
-      bookmark.bookmarked_at || null,
-      tags,
-      bookmark.archivly_folder || null,
-      bookmark.quoted_post_url || null,
-      bookmark.link_title || null
-    );
-  }
+  db.prepare(`
+    INSERT INTO bookmarks
+    (id, tweet_id, author_handle, author_name, text, urls, media_urls, created_at, bookmarked_at, tags, archivly_folder, quoted_post_url, link_title)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(tweet_id) DO UPDATE SET
+      media_urls = CASE WHEN excluded.media_urls != '[]' THEN excluded.media_urls ELSE media_urls END,
+      urls = CASE WHEN excluded.urls != '[]' THEN excluded.urls ELSE urls END,
+      quoted_post_url = CASE WHEN excluded.quoted_post_url IS NOT NULL THEN excluded.quoted_post_url ELSE quoted_post_url END,
+      link_title = CASE WHEN excluded.link_title IS NOT NULL THEN excluded.link_title ELSE link_title END,
+      archivly_folder = CASE WHEN excluded.archivly_folder IS NOT NULL AND excluded.archivly_folder != 'unsorted' THEN excluded.archivly_folder ELSE archivly_folder END
+  `).run(
+    bookmark.id,
+    bookmark.tweet_id,
+    bookmark.author_handle,
+    bookmark.author_name || '',
+    bookmark.text,
+    urls,
+    media_urls,
+    bookmark.created_at || null,
+    bookmark.bookmarked_at || null,
+    tags,
+    bookmark.archivly_folder || null,
+    bookmark.quoted_post_url || null,
+    bookmark.link_title || null
+  );
 }
 
 export async function getAllBookmarks() {
-  let rows: any[];
-  let historyRows: any[];
+  if (!db) return [];
 
-  if (USE_TURSO && tursoClient) {
-    const result = await tursoClient.execute('SELECT * FROM bookmarks ORDER BY imported_at DESC');
-    rows = result.rows as any[];
-    const historyResult = await tursoClient.execute(`
-      SELECT rh.bookmark_id, rh.destination_type, rh.status, d.name as destination_name
-      FROM routing_history rh
-      LEFT JOIN destinations d ON rh.destination_id = d.id
-      WHERE rh.status = 'success'
-      ORDER BY rh.created_at DESC
-    `);
-    historyRows = historyResult.rows as any[];
-  } else if (localDb) {
-    rows = localDb.prepare('SELECT * FROM bookmarks ORDER BY imported_at DESC').all() as any[];
-    historyRows = localDb.prepare(`
-      SELECT rh.bookmark_id, rh.destination_type, rh.status, d.name as destination_name
-      FROM routing_history rh
-      LEFT JOIN destinations d ON rh.destination_id = d.id
-      WHERE rh.status = 'success'
-      ORDER BY rh.created_at DESC
-    `).all() as any[];
-  } else {
-    return [];
-  }
+  const rows = db.prepare('SELECT * FROM bookmarks ORDER BY imported_at DESC').all() as any[];
+  const historyRows = db.prepare(`
+    SELECT rh.bookmark_id, rh.destination_type, rh.status, d.name as destination_name
+    FROM routing_history rh
+    LEFT JOIN destinations d ON rh.destination_id = d.id
+    WHERE rh.status = 'success'
+    ORDER BY rh.created_at DESC
+  `).all() as any[];
 
   const bookmarks = rows.map(parseBookmarkRow);
 
@@ -411,148 +277,88 @@ export async function getAllBookmarks() {
 }
 
 export async function getBookmarkById(id: string) {
-  if (USE_TURSO && tursoClient) {
-    const result = await tursoClient.execute({ sql: 'SELECT * FROM bookmarks WHERE id = ?', args: [id] });
-    return result.rows[0] ? parseBookmarkRow(result.rows[0]) : null;
-  } else if (localDb) {
-    const row = localDb.prepare('SELECT * FROM bookmarks WHERE id = ?').get(id) as any;
-    return row ? parseBookmarkRow(row) : null;
-  }
-  return null;
+  if (!db) return null;
+  const row = db.prepare('SELECT * FROM bookmarks WHERE id = ?').get(id) as any;
+  return row ? parseBookmarkRow(row) : null;
 }
 
 export async function getBookmarkByTweetId(tweetId: string) {
-  if (USE_TURSO && tursoClient) {
-    const result = await tursoClient.execute({ sql: 'SELECT * FROM bookmarks WHERE tweet_id = ?', args: [tweetId] });
-    return result.rows[0] ? parseBookmarkRow(result.rows[0]) : null;
-  } else if (localDb) {
-    const row = localDb.prepare('SELECT * FROM bookmarks WHERE tweet_id = ?').get(tweetId) as any;
-    return row ? parseBookmarkRow(row) : null;
-  }
-  return null;
+  if (!db) return null;
+  const row = db.prepare('SELECT * FROM bookmarks WHERE tweet_id = ?').get(tweetId) as any;
+  return row ? parseBookmarkRow(row) : null;
 }
 
 export async function updateBookmarkStatus(id: string, status: 'pending' | 'routed' | 'archived') {
-  if (USE_TURSO && tursoClient) {
-    await tursoClient.execute({ sql: 'UPDATE bookmarks SET status = ? WHERE id = ?', args: [status, id] });
-  } else if (localDb) {
-    localDb.prepare('UPDATE bookmarks SET status = ? WHERE id = ?').run(status, id);
-  }
+  if (!db) return;
+  db.prepare('UPDATE bookmarks SET status = ? WHERE id = ?').run(status, id);
 }
 
 export async function updateBookmarkFolder(id: string, folder: string | null) {
-  if (USE_TURSO && tursoClient) {
-    await tursoClient.execute({ sql: 'UPDATE bookmarks SET archivly_folder = ? WHERE id = ?', args: [folder, id] });
-  } else if (localDb) {
-    localDb.prepare('UPDATE bookmarks SET archivly_folder = ? WHERE id = ?').run(folder, id);
-  }
+  if (!db) return;
+  db.prepare('UPDATE bookmarks SET archivly_folder = ? WHERE id = ?').run(folder, id);
 }
 
 export async function updateBookmarksFolderBulk(ids: string[], folder: string | null) {
-  if (USE_TURSO && tursoClient) {
+  if (!db) return;
+  const stmt = db.prepare('UPDATE bookmarks SET archivly_folder = ? WHERE id = ?');
+  const updateMany = db.transaction((ids: string[]) => {
     for (const id of ids) {
-      await tursoClient.execute({ sql: 'UPDATE bookmarks SET archivly_folder = ? WHERE id = ?', args: [folder, id] });
+      stmt.run(folder, id);
     }
-  } else if (localDb) {
-    const stmt = localDb.prepare('UPDATE bookmarks SET archivly_folder = ? WHERE id = ?');
-    const updateMany = localDb.transaction((ids: string[]) => {
-      for (const id of ids) {
-        stmt.run(folder, id);
-      }
-    });
-    updateMany(ids);
-  }
+  });
+  updateMany(ids);
 }
 
 export async function deleteBookmarks(ids: string[], keepQueue: boolean = false) {
-  if (USE_TURSO && tursoClient) {
+  if (!db) return;
+  const deleteHistory = db.prepare('DELETE FROM routing_history WHERE bookmark_id = ?');
+  const deleteQueue = db.prepare('DELETE FROM unbookmark_queue WHERE bookmark_id = ?');
+  const deleteBookmark = db.prepare('DELETE FROM bookmarks WHERE id = ?');
+  const deleteMany = db.transaction((ids: string[]) => {
     for (const id of ids) {
-      await tursoClient.execute({ sql: 'DELETE FROM routing_history WHERE bookmark_id = ?', args: [id] });
+      deleteHistory.run(id);
       if (!keepQueue) {
-        await tursoClient.execute({ sql: 'DELETE FROM unbookmark_queue WHERE bookmark_id = ?', args: [id] });
+        deleteQueue.run(id);
       }
-      await tursoClient.execute({ sql: 'DELETE FROM bookmarks WHERE id = ?', args: [id] });
+      deleteBookmark.run(id);
     }
-  } else if (localDb) {
-    const deleteHistory = localDb.prepare('DELETE FROM routing_history WHERE bookmark_id = ?');
-    const deleteQueue = localDb.prepare('DELETE FROM unbookmark_queue WHERE bookmark_id = ?');
-    const deleteBookmark = localDb.prepare('DELETE FROM bookmarks WHERE id = ?');
-    const deleteMany = localDb.transaction((ids: string[]) => {
-      for (const id of ids) {
-        deleteHistory.run(id);
-        if (!keepQueue) {
-          deleteQueue.run(id);
-        }
-        deleteBookmark.run(id);
-      }
-    });
-    deleteMany(ids);
-  }
+  });
+  deleteMany(ids);
 }
 
 export async function updateBookmarkEmbedding(id: string, embedding: number[]) {
-  if (USE_TURSO && tursoClient) {
-    await tursoClient.execute({ sql: 'UPDATE bookmarks SET embedding = ? WHERE id = ?', args: [JSON.stringify(embedding), id] });
-  } else if (localDb) {
-    const buffer = Buffer.from(new Float32Array(embedding).buffer);
-    localDb.prepare('UPDATE bookmarks SET embedding = ? WHERE id = ?').run(buffer, id);
-  }
+  if (!db) return;
+  const buffer = Buffer.from(new Float32Array(embedding).buffer);
+  db.prepare('UPDATE bookmarks SET embedding = ? WHERE id = ?').run(buffer, id);
 }
 
 export async function getBookmarksWithoutEmbeddings() {
-  if (USE_TURSO && tursoClient) {
-    const result = await tursoClient.execute('SELECT * FROM bookmarks WHERE embedding IS NULL');
-    return (result.rows as any[]).map(parseBookmarkRow);
-  } else if (localDb) {
-    const rows = localDb.prepare('SELECT * FROM bookmarks WHERE embedding IS NULL').all() as any[];
-    return rows.map(parseBookmarkRow);
-  }
-  return [];
+  if (!db) return [];
+  const rows = db.prepare('SELECT * FROM bookmarks WHERE embedding IS NULL').all() as any[];
+  return rows.map(parseBookmarkRow);
 }
 
 export async function updateBookmarkLinkTitle(id: string, linkTitle: string | null) {
-  if (USE_TURSO && tursoClient) {
-    await tursoClient.execute({ sql: 'UPDATE bookmarks SET link_title = ? WHERE id = ?', args: [linkTitle, id] });
-  } else if (localDb) {
-    localDb.prepare('UPDATE bookmarks SET link_title = ? WHERE id = ?').run(linkTitle, id);
-  }
+  if (!db) return;
+  db.prepare('UPDATE bookmarks SET link_title = ? WHERE id = ?').run(linkTitle, id);
 }
 
 export async function getBookmarksWithoutLinkTitles() {
-  const sql = `SELECT * FROM bookmarks WHERE link_title IS NULL AND urls != '[]' AND urls NOT LIKE '%t.co%'`;
-  if (USE_TURSO && tursoClient) {
-    const result = await tursoClient.execute(sql);
-    return (result.rows as any[]).map(parseBookmarkRow);
-  } else if (localDb) {
-    const rows = localDb.prepare(sql).all() as any[];
-    return rows.map(parseBookmarkRow);
-  }
-  return [];
+  if (!db) return [];
+  const rows = db.prepare(`SELECT * FROM bookmarks WHERE link_title IS NULL AND urls != '[]' AND urls NOT LIKE '%t.co%'`).all() as any[];
+  return rows.map(parseBookmarkRow);
 }
 
 // Destination operations
 export async function insertDestination(dest: { id: string; type: string; name: string; config: Record<string, string> }) {
+  if (!db) return;
   const config = JSON.stringify(dest.config);
-  if (USE_TURSO && tursoClient) {
-    await tursoClient.execute({
-      sql: 'INSERT INTO destinations (id, type, name, config) VALUES (?, ?, ?, ?)',
-      args: [dest.id, dest.type, dest.name, config],
-    });
-  } else if (localDb) {
-    localDb.prepare('INSERT INTO destinations (id, type, name, config) VALUES (?, ?, ?, ?)').run(dest.id, dest.type, dest.name, config);
-  }
+  db.prepare('INSERT INTO destinations (id, type, name, config) VALUES (?, ?, ?, ?)').run(dest.id, dest.type, dest.name, config);
 }
 
 export async function getAllDestinations() {
-  let rows: any[];
-  if (USE_TURSO && tursoClient) {
-    const result = await tursoClient.execute('SELECT * FROM destinations ORDER BY created_at');
-    rows = result.rows as any[];
-  } else if (localDb) {
-    rows = localDb.prepare('SELECT * FROM destinations ORDER BY created_at').all() as any[];
-  } else {
-    return [];
-  }
+  if (!db) return [];
+  const rows = db.prepare('SELECT * FROM destinations ORDER BY created_at').all() as any[];
   return rows.map(row => ({
     id: row.id,
     type: row.type,
@@ -563,20 +369,13 @@ export async function getAllDestinations() {
 }
 
 export async function deleteDestination(id: string) {
-  if (USE_TURSO && tursoClient) {
-    await tursoClient.execute({ sql: 'DELETE FROM destinations WHERE id = ?', args: [id] });
-  } else if (localDb) {
-    localDb.prepare('DELETE FROM destinations WHERE id = ?').run(id);
-  }
+  if (!db) return;
+  db.prepare('DELETE FROM destinations WHERE id = ?').run(id);
 }
 
 export async function updateDestinationConfig(id: string, config: Record<string, string>) {
-  const configJson = JSON.stringify(config);
-  if (USE_TURSO && tursoClient) {
-    await tursoClient.execute({ sql: 'UPDATE destinations SET config = ? WHERE id = ?', args: [configJson, id] });
-  } else if (localDb) {
-    localDb.prepare('UPDATE destinations SET config = ? WHERE id = ?').run(configJson, id);
-  }
+  if (!db) return;
+  db.prepare('UPDATE destinations SET config = ? WHERE id = ?').run(JSON.stringify(config), id);
 }
 
 // Routing history
@@ -588,26 +387,15 @@ export async function insertRoutingHistory(entry: {
   status: string;
   error_message?: string;
 }) {
-  if (USE_TURSO && tursoClient) {
-    await tursoClient.execute({
-      sql: 'INSERT INTO routing_history (id, bookmark_id, destination_id, destination_type, status, error_message) VALUES (?, ?, ?, ?, ?, ?)',
-      args: [entry.id, entry.bookmark_id, entry.destination_id, entry.destination_type, entry.status, entry.error_message || null],
-    });
-  } else if (localDb) {
-    localDb.prepare('INSERT INTO routing_history (id, bookmark_id, destination_id, destination_type, status, error_message) VALUES (?, ?, ?, ?, ?, ?)').run(
-      entry.id, entry.bookmark_id, entry.destination_id, entry.destination_type, entry.status, entry.error_message || null
-    );
-  }
+  if (!db) return;
+  db.prepare('INSERT INTO routing_history (id, bookmark_id, destination_id, destination_type, status, error_message) VALUES (?, ?, ?, ?, ?, ?)').run(
+    entry.id, entry.bookmark_id, entry.destination_id, entry.destination_type, entry.status, entry.error_message || null
+  );
 }
 
 export async function getRoutingHistoryForBookmark(bookmarkId: string) {
-  if (USE_TURSO && tursoClient) {
-    const result = await tursoClient.execute({ sql: 'SELECT * FROM routing_history WHERE bookmark_id = ? ORDER BY created_at DESC', args: [bookmarkId] });
-    return result.rows;
-  } else if (localDb) {
-    return localDb.prepare('SELECT * FROM routing_history WHERE bookmark_id = ? ORDER BY created_at DESC').all(bookmarkId);
-  }
-  return [];
+  if (!db) return [];
+  return db.prepare('SELECT * FROM routing_history WHERE bookmark_id = ? ORDER BY created_at DESC').all(bookmarkId);
 }
 
 // Unbookmark queue operations
@@ -617,42 +405,25 @@ export async function addToUnbookmarkQueue(entry: {
   bookmark_id: string;
   author_handle?: string;
 }) {
-  if (USE_TURSO && tursoClient) {
-    await tursoClient.execute({
-      sql: 'INSERT OR IGNORE INTO unbookmark_queue (id, tweet_id, bookmark_id, author_handle) VALUES (?, ?, ?, ?)',
-      args: [entry.id, entry.tweet_id, entry.bookmark_id, entry.author_handle || null],
-    });
-  } else if (localDb) {
-    localDb.prepare('INSERT OR IGNORE INTO unbookmark_queue (id, tweet_id, bookmark_id, author_handle) VALUES (?, ?, ?, ?)').run(
-      entry.id, entry.tweet_id, entry.bookmark_id, entry.author_handle || null
-    );
-  }
+  if (!db) return;
+  db.prepare('INSERT OR IGNORE INTO unbookmark_queue (id, tweet_id, bookmark_id, author_handle) VALUES (?, ?, ?, ?)').run(
+    entry.id, entry.tweet_id, entry.bookmark_id, entry.author_handle || null
+  );
 }
 
 export async function getUnbookmarkQueue() {
-  if (USE_TURSO && tursoClient) {
-    const result = await tursoClient.execute('SELECT * FROM unbookmark_queue ORDER BY added_at ASC');
-    return result.rows;
-  } else if (localDb) {
-    return localDb.prepare('SELECT * FROM unbookmark_queue ORDER BY added_at ASC').all();
-  }
-  return [];
+  if (!db) return [];
+  return db.prepare('SELECT * FROM unbookmark_queue ORDER BY added_at ASC').all();
 }
 
 export async function removeFromUnbookmarkQueue(tweetId: string) {
-  if (USE_TURSO && tursoClient) {
-    await tursoClient.execute({ sql: 'DELETE FROM unbookmark_queue WHERE tweet_id = ?', args: [tweetId] });
-  } else if (localDb) {
-    localDb.prepare('DELETE FROM unbookmark_queue WHERE tweet_id = ?').run(tweetId);
-  }
+  if (!db) return;
+  db.prepare('DELETE FROM unbookmark_queue WHERE tweet_id = ?').run(tweetId);
 }
 
 export async function clearUnbookmarkQueue() {
-  if (USE_TURSO && tursoClient) {
-    await tursoClient.execute('DELETE FROM unbookmark_queue');
-  } else if (localDb) {
-    localDb.prepare('DELETE FROM unbookmark_queue').run();
-  }
+  if (!db) return;
+  db.prepare('DELETE FROM unbookmark_queue').run();
 }
 
 // Cached tweet operations
@@ -662,52 +433,34 @@ export async function insertCachedTweet(tweet: {
   author_name?: string;
   text: string;
 }) {
-  if (USE_TURSO && tursoClient) {
-    await tursoClient.execute({
-      sql: 'INSERT OR REPLACE INTO cached_tweets (tweet_id, author_handle, author_name, text) VALUES (?, ?, ?, ?)',
-      args: [tweet.tweet_id, tweet.author_handle, tweet.author_name || tweet.author_handle, tweet.text],
-    });
-  } else if (localDb) {
-    localDb.prepare('INSERT OR REPLACE INTO cached_tweets (tweet_id, author_handle, author_name, text) VALUES (?, ?, ?, ?)').run(
-      tweet.tweet_id, tweet.author_handle, tweet.author_name || tweet.author_handle, tweet.text
-    );
-  }
+  if (!db) return;
+  db.prepare('INSERT OR REPLACE INTO cached_tweets (tweet_id, author_handle, author_name, text) VALUES (?, ?, ?, ?)').run(
+    tweet.tweet_id, tweet.author_handle, tweet.author_name || tweet.author_handle, tweet.text
+  );
 }
 
 export async function getCachedTweet(tweetId: string) {
-  if (USE_TURSO && tursoClient) {
-    const result = await tursoClient.execute({ sql: 'SELECT * FROM cached_tweets WHERE tweet_id = ?', args: [tweetId] });
-    return result.rows[0] as unknown as { tweet_id: string; author_handle: string; author_name: string; text: string; fetched_at: string } | undefined;
-  } else if (localDb) {
-    return localDb.prepare('SELECT * FROM cached_tweets WHERE tweet_id = ?').get(tweetId) as {
-      tweet_id: string; author_handle: string; author_name: string; text: string; fetched_at: string;
-    } | undefined;
-  }
-  return undefined;
+  if (!db) return undefined;
+  return db.prepare('SELECT * FROM cached_tweets WHERE tweet_id = ?').get(tweetId) as {
+    tweet_id: string; author_handle: string; author_name: string; text: string; fetched_at: string;
+  } | undefined;
 }
 
 export async function getCachedTweetsByIds(tweetIds: string[]) {
   const map = new Map<string, { text: string; author_handle: string; media_urls?: string[] }>();
-  if (tweetIds.length === 0) return map;
+  if (!db || tweetIds.length === 0) return map;
 
-  if (USE_TURSO && tursoClient) {
-    const placeholders = tweetIds.map(() => '?').join(',');
-    const result = await tursoClient.execute({ sql: `SELECT * FROM cached_tweets WHERE tweet_id IN (${placeholders})`, args: tweetIds });
-    for (const row of result.rows as any[]) {
-      map.set(row.tweet_id, { text: row.text, author_handle: row.author_handle });
-    }
-  } else if (localDb) {
-    const placeholders = tweetIds.map(() => '?').join(',');
-    const rows = localDb.prepare(`SELECT * FROM cached_tweets WHERE tweet_id IN (${placeholders})`).all(...tweetIds) as any[];
-    for (const row of rows) {
-      map.set(row.tweet_id, { text: row.text, author_handle: row.author_handle });
-    }
+  const placeholders = tweetIds.map(() => '?').join(',');
+  const rows = db.prepare(`SELECT * FROM cached_tweets WHERE tweet_id IN (${placeholders})`).all(...tweetIds) as any[];
+  for (const row of rows) {
+    map.set(row.tweet_id, { text: row.text, author_handle: row.author_handle });
   }
   return map;
 }
 
 export async function getBookmarksWithMissingQuotedTweets() {
-  const sql = `
+  if (!db) return [];
+  return db.prepare(`
     SELECT b.id, b.quoted_post_url
     FROM bookmarks b
     WHERE b.quoted_post_url IS NOT NULL
@@ -719,26 +472,19 @@ export async function getBookmarksWithMissingQuotedTweets() {
         SELECT 1 FROM cached_tweets ct
         WHERE ct.tweet_id = SUBSTR(b.quoted_post_url, INSTR(b.quoted_post_url, '/status/') + 8)
       )
-  `;
-  if (USE_TURSO && tursoClient) {
-    const result = await tursoClient.execute(sql);
-    return result.rows as unknown as { id: string; quoted_post_url: string }[];
-  } else if (localDb) {
-    return localDb.prepare(sql).all() as { id: string; quoted_post_url: string }[];
-  }
-  return [];
+  `).all() as { id: string; quoted_post_url: string }[];
 }
 
 export function closeDb() {
-  if (localDb) {
-    localDb.close();
+  if (db) {
+    db.close();
   }
 }
 
-// Legacy sync wrapper for getDb (for backward compatibility during migration)
+// Legacy sync wrapper for getDb (for backward compatibility)
 export function getDb(): Database.Database {
-  if (!localDb) {
-    throw new Error('Local database not initialized. Call initDb() first or use async methods.');
+  if (!db) {
+    throw new Error('Database not initialized. Call initDb() first.');
   }
-  return localDb;
+  return db;
 }
