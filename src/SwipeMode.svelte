@@ -24,10 +24,23 @@
     }
   });
 
-  // Shuffle mode — maintains a shuffled order of indices
-  let shuffleMode = $state(false);
+  // Random mode is ON by default — bookmarks are shown in random order so
+  // you're not stuck reviewing them in chronological order.
+  let shuffleMode = $state(true);
   let shuffledIndices: number[] = $state([]);
   let shufflePos = $state(0);
+  let shuffleInitialized = false;
+
+  // Initialize the shuffle as soon as bookmarks become available
+  $effect(() => {
+    const list = $filteredBookmarks;
+    if (!shuffleInitialized && shuffleMode && list.length > 0) {
+      shuffleInitialized = true;
+      shuffledIndices = buildShuffledIndices(list.length);
+      shufflePos = 0;
+      swipeIndex = shuffledIndices[0];
+    }
+  });
 
   // Fisher-Yates shuffle to build a randomized index order
   function buildShuffledIndices(length: number) {
@@ -46,6 +59,17 @@
       shufflePos = 0;
       swipeIndex = shuffledIndices[0];
     }
+  }
+
+  // Pick a random next bookmark from the filtered list (for skip, etc.)
+  function pickRandomNext() {
+    const list = $filteredBookmarks;
+    if (list.length <= 1) return;
+    let next: number;
+    do {
+      next = Math.floor(Math.random() * list.length);
+    } while (next === swipeIndex);
+    swipeIndex = next;
   }
 
   // Bottom sheet panels
