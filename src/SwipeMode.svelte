@@ -202,20 +202,20 @@
     swipeAnimating = true;
     swipeDeltaX = window.innerWidth + 100;
 
-    setTimeout(async () => {
+    setTimeout(() => {
       if (bookmark) {
-        try {
-          await api.deleteBookmarks([bookmark.id], true);
-          showStatus('Deleted & queued for unbookmark');
-          const data = await api.fetchBookmarks();
-          bookmarks.set(data);
-        } catch (err) {
+        // Optimistic: remove from local store immediately so next card appears
+        bookmarks.update(list => list.filter(b => b.id !== bookmark.id));
+        showStatus('Deleted & queued for unbookmark');
+
+        // Fire API call in background — don't wait for it
+        api.deleteBookmarks([bookmark.id], true).catch(err => {
           console.error('Delete failed:', err);
-          showStatus('Failed to delete');
-        }
+          showStatus('Delete may have failed — refresh to check');
+        });
       }
-      finishAdvance(true); // bookmark was removed from list
-    }, 250);
+      finishAdvance(true);
+    }, 150);
   }
 
   function finishAdvance(wasRemovedFromList: boolean) {
@@ -260,7 +260,7 @@
     }
   }
 
-  async function sendToInstapaperAndAdvance() {
+  function sendToInstapaperAndAdvance() {
     const bookmark = $filteredBookmarks[swipeIndex];
     if (!bookmark) return;
 
@@ -270,17 +270,18 @@
       return;
     }
 
-    try {
-      await api.routeBookmarksBulk([bookmark.id], dest.id);
-      showStatus('Sent to Instapaper');
-      const data = await api.fetchBookmarks();
-      bookmarks.set(data);
-      // Bookmark is still in list (just marked routed), advance past it
-      finishAdvance(false);
-    } catch (err) {
+    // Optimistic: mark as routed locally and advance immediately
+    bookmarks.update(list => list.map(b =>
+      b.id === bookmark.id ? { ...b, status: 'routed' as const } : b
+    ));
+    showStatus('Sent to Instapaper');
+    finishAdvance(false);
+
+    // Fire API in background
+    api.routeBookmarksBulk([bookmark.id], dest.id).catch(err => {
       console.error('Instapaper failed:', err);
-      showStatus('Failed to send to Instapaper');
-    }
+      showStatus('Instapaper send may have failed');
+    });
   }
 
   function skip() {
@@ -289,7 +290,7 @@
     swipeDeltaX = -(window.innerWidth + 100);
     setTimeout(() => {
       finishAdvance(false); // bookmark still in list, advance past it
-    }, 250);
+    }, 150);
   }
 
   // Doc search
@@ -322,19 +323,22 @@
     const bookmark = $filteredBookmarks[swipeIndex];
     if (!bookmark) return;
 
-    try {
-      await api.sendToGoogleDoc([bookmark.id], doc.id, doc.name, activeGoogleAccount);
-      showStatus(`Sent to "${doc.name}"`);
-      showDocPanel = false;
-      docQuery = '';
-      docResults = [];
-      const data = await api.fetchBookmarks();
-      bookmarks.set(data);
-      finishAdvance(false); // bookmark still in list
-    } catch (err) {
+    showDocPanel = false;
+    docQuery = '';
+    docResults = [];
+
+    // Optimistic: mark routed and advance
+    bookmarks.update(list => list.map(b =>
+      b.id === bookmark.id ? { ...b, status: 'routed' as const } : b
+    ));
+    showStatus(`Sent to "${doc.name}"`);
+    finishAdvance(false);
+
+    // Fire API in background
+    api.sendToGoogleDoc([bookmark.id], doc.id, doc.name, activeGoogleAccount).catch(err => {
       console.error('Send to doc failed:', err);
       showStatus('Failed to send to doc');
-    }
+    });
   }
 
   // Notion search
@@ -366,40 +370,46 @@
     const bookmark = $filteredBookmarks[swipeIndex];
     if (!bookmark) return;
 
-    try {
-      await api.sendToNotionPage([bookmark.id], page.id, page.title);
-      showStatus(`Sent to "${page.title}"`);
-      showNotionPanel = false;
-      notionQuery = '';
-      notionResults = [];
-      const data = await api.fetchBookmarks();
-      bookmarks.set(data);
-      finishAdvance(false); // bookmark still in list
-    } catch (err) {
+    showNotionPanel = false;
+    notionQuery = '';
+    notionResults = [];
+
+    // Optimistic: mark routed and advance
+    bookmarks.update(list => list.map(b =>
+      b.id === bookmark.id ? { ...b, status: 'routed' as const } : b
+    ));
+    showStatus(`Sent to "${page.title}"`);
+    finishAdvance(false);
+
+    // Fire API in background
+    api.sendToNotionPage([bookmark.id], page.id, page.title).catch(err => {
       console.error('Send to Notion failed:', err);
       showStatus('Failed to send to Notion');
-    }
+    });
   }
 
   // Folder
-  async function moveToFolder(folder: string | null) {
+  function moveToFolder(folder: string | null) {
     const bookmark = $filteredBookmarks[swipeIndex];
     if (!bookmark) return;
-    const prevLen = $filteredBookmarks.length;
 
-    try {
-      await api.moveToFolder([bookmark.id], folder);
-      showStatus(folder ? `Moved to "${folder}"` : 'Removed from folder');
-      showFolderPanel = false;
-      const data = await api.fetchBookmarks();
-      bookmarks.set(data);
-      // If the filtered list shrank, the bookmark left the current filter view
-      const wasRemoved = $filteredBookmarks.length < prevLen;
-      finishAdvance(wasRemoved);
-    } catch (err) {
+    // Check if the bookmark will leave the current folder filter
+    const activeFolder = $filters.folder;
+    const willLeaveFilter = activeFolder && folder !== activeFolder;
+
+    // Optimistic: update folder locally and advance
+    bookmarks.update(list => list.map(b =>
+      b.id === bookmark.id ? { ...b, archivly_folder: folder } : b
+    ));
+    showStatus(folder ? `Moved to "${folder}"` : 'Removed from folder');
+    showFolderPanel = false;
+    finishAdvance(!!willLeaveFilter);
+
+    // Fire API in background
+    api.moveToFolder([bookmark.id], folder).catch(err => {
       console.error('Move to folder failed:', err);
       showStatus('Failed to move to folder');
-    }
+    });
   }
 
   function closeAllPanels() {
@@ -472,7 +482,7 @@
         ontouchend={onTouchEnd}
         role="button"
         tabindex="0"
-        style="transform: translateX({swipeDeltaX}px) rotate({swipeDeltaX * 0.03}deg); {swipeAnimating ? 'transition: transform 250ms ease-out;' : ''}touch-action: none;"
+        style="transform: translateX({swipeDeltaX}px) rotate({swipeDeltaX * 0.03}deg); {swipeAnimating ? 'transition: transform 150ms ease-out;' : ''}touch-action: none;"
       >
         <!-- Swipe indicators -->
         {#if swipeDeltaX > 20}
